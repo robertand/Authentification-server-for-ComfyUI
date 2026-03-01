@@ -309,7 +309,7 @@ def load_config():
 
 def save_config():
     try:
-        config = {
+        config_data = {
             "users": USERS,
             "admin": ADMIN_CONFIG,
             "workflow_root": WORKFLOW_ROOT_DIR,
@@ -317,7 +317,7 @@ def save_config():
             "cookie_secret": config.get("cookie_secret")
         }
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
+            json.dump(config_data, f, indent=2, ensure_ascii=False)
         log.info("✓ Configurație salvată în fișier")
     except Exception as e:
         log.error(f"Eroare la salvarea configurației: {e}")
