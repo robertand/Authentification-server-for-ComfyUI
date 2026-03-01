@@ -408,13 +408,15 @@ def check_single_instance(comfy_url, nginx_auth=None):
                 headers['Authorization'] = f"Basic {encoded_auth}"
             
             # verify=False pentru a suporta HTTPS cu certificate self-signed sau Cloudflare
-            r = requests.get(f"{comfy_url}/", timeout=5, headers=headers, verify=False)
+            r = requests.get(f"{comfy_url}/", timeout=5, headers=headers, verify=False, allow_redirects=True)
 
             # Acceptăm orice status code sub 500 (inclusiv 301/302/401/404) ca fiind "online"
             if r.status_code < 500:
                 comfy_instances_ready[comfy_url] = True
-                log.info(f"ComfyUI instance {comfy_url} is ready!")
+                log.info(f"ComfyUI instance {comfy_url} is ready! Status: {r.status_code}")
                 return
+            else:
+                log.warning(f"ComfyUI instance {comfy_url} returned status {r.status_code}")
         except Exception as e:
             if i % 10 == 0:
                 log.info(f"Waiting for ComfyUI {comfy_url}... ({i}/60) - {str(e)}")
@@ -2099,12 +2101,12 @@ class MultiInstanceProxyHandler(BaseHandler):
         for pattern, replacement in patterns:
             html_content = re.sub(pattern, replacement, html_content, flags=re.IGNORECASE)
         
-        # 2. Rescrie URL-uri relative care încep cu / (dar nu /static/)
+        # 2. Rescrie URL-uri relative (dar nu /static/)
         def replace_relative_url(match):
             full_match = match.group(0)
-            quote_char = match.group(1)
+            prefix = match.group(1)
             url = match.group(2)
-            end_quote = match.group(3)
+            suffix = match.group(3)
             
             if not url:
                 return full_match
@@ -2117,8 +2119,8 @@ class MultiInstanceProxyHandler(BaseHandler):
             if url.startswith('/static/') or url.startswith('/css/') or url.startswith('/js/'):
                 return full_match
             
-            # Nu modifica URL-urile care sunt deja absolute
-            if url.startswith('http://') or url.startswith('https://') or url.startswith('ws://') or url.startswith('wss://'):
+            # Nu modifica URL-urile care sunt deja absolute sau baze de date/blob
+            if url.startswith(('http://', 'https://', 'ws://', 'wss://', 'data:', 'blob:')):
                 return full_match
             
             # Rescrie URL-ul relativ să pointeze către /comfy/
@@ -2127,23 +2129,14 @@ class MultiInstanceProxyHandler(BaseHandler):
             else:
                 new_url = f'/comfy/{url}'
             
-            return f'{quote_char}{new_url}{end_quote}'
+            return f'{prefix}{new_url}{suffix}'
         
-        # Găsește toate URL-urile în atributele src, href, action, etc.
+        # Găsește toate URL-urile în atributele src, href, action, data-src, etc.
         html_content = re.sub(
-            r'(src=["\'])([^"\']*)(["\'])',
+            r'((?:src|href|action|data-src|data-href)\s*=\s*["\'])([^"\']*)(["\'])',
             replace_relative_url,
-            html_content
-        )
-        html_content = re.sub(
-            r'(href=["\'])([^"\']*)(["\'])',
-            replace_relative_url,
-            html_content
-        )
-        html_content = re.sub(
-            r'(action=["\'])([^"\']*)(["\'])',
-            replace_relative_url,
-            html_content
+            html_content,
+            flags=re.IGNORECASE
         )
         
         # 3. Rescrie URL-uri WebSocket în JavaScript
@@ -2261,7 +2254,9 @@ class MultiInstanceProxyHandler(BaseHandler):
         
         try:
             # Pregătește headerele
-            headers = {}
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
             
             # Exclude headere care nu trebuie propagate
             exclude_headers = ['host', 'content-length', 'connection', 'keep-alive', 
@@ -2271,6 +2266,10 @@ class MultiInstanceProxyHandler(BaseHandler):
                 if header_name.lower() not in exclude_headers:
                     headers[header_name] = header_value
             
+            # Setează Host header corect pentru instanțe externe/tunelate
+            parsed_target = urlparse(target_url)
+            headers['Host'] = parsed_target.netloc
+
             # Obține portul corect
             port = self._get_port_from_host()
             
