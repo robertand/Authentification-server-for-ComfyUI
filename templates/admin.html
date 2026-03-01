@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ComfyUI Admin</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 20px; background: #1a1a1a; color: #e0e0e0; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .tabs { display: flex; margin-bottom: 20px; border-bottom: 1px solid #444; }
+        .tab { padding: 10px 20px; cursor: pointer; border: 1px solid transparent; }
+        .tab.active { background: #2a2a2a; border: 1px solid #444; border-bottom: none; border-radius: 5px 5px 0 0; }
+        .tab-content { display: none; padding: 20px; background: #2a2a2a; border-radius: 0 5px 5px 5px; }
+        .tab-content.active { display: block; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #e0e0e0; }
+        input, select { width: 100%; padding: 8px; border: 1px solid #444; background: #333; color: #e0e0e0; border-radius: 4px; }
+        button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; }
+        button:hover { background: #0056b3; }
+        button.delete { background: #dc3545; }
+        button.delete:hover { background: #c82333; }
+        button.edit { background: #ffc107; color: #000; }
+        button.edit:hover { background: #e0a800; }
+        button.security { background: #28a745; }
+        button.security:hover { background: #218838; }
+        .status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px; }
+        .status-card { background: #2a2a2a; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745; }
+        .status-card.full { border-left-color: #dc3545; }
+        .status-card.limited { border-left-color: #ffc107; }
+        .session-list { margin-top: 20px; }
+        .session-item { background: #333; padding: 10px; margin: 5px 0; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+        .session-info { flex-grow: 1; }
+        .session-actions { flex-shrink: 0; }
+        .remaining-time { font-size: 12px; color: #aaa; }
+        .security-status { padding: 10px; border-radius: 5px; margin: 10px 0; }
+        .security-on { background: #28a745; }
+        .security-off { background: #dc3545; }
+        .logout-btn { background: #6c757d; }
+        .logout-btn:hover { background: #5a6268; }
+        .help-text { font-size: 12px; color: #aaa; margin-top: 5px; }
+        .save-notification { 
+            position: fixed; 
+            top: 20px; 
+            right: 20px; 
+            background: #28a745; 
+            color: white; 
+            padding: 10px 20px; 
+            border-radius: 5px; 
+            z-index: 1000;
+            display: none;
+        }
+        .blocked-user-item { background: #dc3545; padding: 10px; margin: 5px 0; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+        
+        /* Nginx Auth Styles */
+        .nginx-section { 
+            background: #2a2a2a; 
+            padding: 20px; 
+            border-radius: 5px; 
+            margin: 20px 0; 
+            border-left: 4px solid #17a2b8; 
+        }
+        .nginx-section h3 { 
+            color: #17a2b8; 
+            margin-top: 0; 
+            margin-bottom: 15px; 
+        }
+        .checkbox-group { 
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+        }
+        .checkbox-group input[type="checkbox"] { 
+            width: auto; 
+        }
+        .nginx-user-item { 
+            background: #333; 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-radius: 5px; 
+            border-left: 3px solid #17a2b8; 
+        }
+        .nginx-user-header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            margin-bottom: 10px; 
+        }
+        .nginx-user-header h4 { 
+            margin: 0; 
+            color: #17a2b8; 
+        }
+        .nginx-user-details { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr); 
+            gap: 10px; 
+            margin: 10px 0; 
+        }
+        .nginx-badge { 
+            background: #17a2b8; 
+            color: white; 
+            padding: 3px 8px; 
+            border-radius: 3px; 
+            font-size: 11px; 
+            display: inline-block; 
+        }
+        .nginx-badge.disabled { 
+            background: #6c757d; 
+        }
+        
+        /* Chat Styles for Admin */
+        .chat-section { margin-top: 30px; }
+        .chat-user-list { background: #333; padding: 15px; border-radius: 5px; margin-bottom: 15px; }
+        .chat-user-item { padding: 10px; margin: 5px 0; background: #444; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .chat-user-item:hover { background: #555; }
+        .chat-user-item.active { background: #007bff; }
+        .chat-messages-admin { height: 300px; overflow-y: auto; background: #2a2a2a; padding: 15px; border-radius: 5px; margin-bottom: 15px; display: flex; flex-direction: column; gap: 10px; }
+        .chat-message-admin { padding: 8px 12px; border-radius: 8px; max-width: 80%; word-wrap: break-word; }
+        .chat-message-admin.admin { background: #007bff; color: white; align-self: flex-end; border-bottom-right-radius: 2px; }
+        .chat-message-admin.user { background: #28a745; color: white; align-self: flex-start; border-bottom-left-radius: 2px; }
+        .chat-message-time-admin { font-size: 10px; opacity: 0.7; margin-top: 2px; }
+        .chat-input-admin { display: flex; gap: 10px; }
+        .chat-input-admin input { flex: 1; }
+        .unread-badge { background: #dc3545; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+        
+        /* About Modal Styles for Admin */
+        .admin-about-modal { 
+            display: none; 
+            position: fixed; 
+            z-index: 10000; 
+            left: 0; 
+            top: 0; 
+            width: 100%; 
+            height: 100%; 
+            background-color: rgba(0,0,0,0.7); 
+        }
+        .admin-about-modal-content { 
+            background-color: #2a2a2a; 
+            margin: 5% auto; 
+            padding: 30px; 
+            border-radius: 10px; 
+            width: 500px; 
+            max-height: 80vh;
+            overflow-y: auto;
+            text-align: center; 
+            box-shadow: 0 0 20px rgba(0,0,0,0.5); 
+        }
+        .admin-about-modal h2 { 
+            color: #007bff; 
+            margin-bottom: 20px; 
+        }
+        .admin-about-modal p { 
+            margin-bottom: 25px; 
+            line-height: 1.6; 
+            color: #e0e0e0; 
+        }
+        .admin-about-close-btn { 
+            background: #007bff; 
+            color: white; 
+            border: none; 
+            padding: 12px 30px; 
+            border-radius: 5px; 
+            cursor: pointer; 
+            font-size: 16px; 
+        }
+        .admin-about-close-btn:hover { 
+            background: #0056b3; 
+        }
+
+        /* Edit Modal Styles */
+        .edit-modal { 
+            display: none; 
+            position: fixed; 
+            z-index: 10004; 
+            left: 0; 
+            top: 0; 
+            width: 100%; 
+            height: 100%; 
+            background-color: rgba(0,0,0,0.7); 
+        }
+        .edit-modal-content { 
+            background-color: #2a2a2a; 
+            margin: 5% auto; 
+            padding: 30px; 
+            border-radius: 10px; 
+            width: 500px; 
+            box-shadow: 0 0 20px rgba(0,0,0,0.5); 
+        }
+        .edit-modal h2 { 
+            color: #007bff; 
+            margin-bottom: 20px; 
+            text-align: center;
+        }
+        .edit-modal .form-group { 
+            margin-bottom: 15px; 
+        }
+        .edit-modal label { 
+            display: block; 
+            margin-bottom: 5px; 
+            font-weight: bold; 
+            color: #e0e0e0;
+        }
+        .edit-modal input, .edit-modal select { 
+            width: 100%; 
+            padding: 8px; 
+            border: 1px solid #444; 
+            background: #333; 
+            color: #e0e0e0; 
+            border-radius: 4px; 
+        }
+        .edit-modal-buttons { 
+            display: flex; 
+            justify-content: space-between; 
+            margin-top: 20px; 
+        }
+        .edit-modal-btn { 
+            background: #007bff; 
+            color: white; 
+            border: none; 
+            padding: 10px 20px; 
+            border-radius: 5px; 
+            cursor: pointer; 
+        }
+        .edit-modal-btn.save { 
+            background: #28a745; 
+        }
+        .edit-modal-btn.cancel { 
+            background: #6c757d; 
+        }
+        .edit-modal-btn:hover { 
+            opacity: 0.9; 
+        }
+        
+        /* File upload styles for admin chat */
+        .file-preview-admin {
+            background: #333;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            display: none;
+        }
+        .file-preview-item-admin {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px;
+            margin: 5px 0;
+        }
+        .file-preview-name-admin {
+            flex: 1;
+            font-size: 12px;
+        }
+        .file-preview-remove-admin {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 2px 6px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 10px;
+        }
+        .chat-file-message-admin {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 5px;
+            margin-top: 5px;
+        }
+        .chat-file-icon-admin {
+            font-size: 16px;
+        }
+        .chat-file-name-admin {
+            flex: 1;
+            font-size: 12px;
+            word-break: break-all;
+        }
+        .chat-file-download-admin {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 10px;
+            text-decoration: none;
+        }
+        .chat-file-download-admin:hover {
+            background: #218838;
+        }
+    </style>
+</head>
+<body>
+    <div class="save-notification" id="saveNotification">Changes saved successfully!</div>
+    
+    <!-- About Modal for Admin -->
+    <div id="aboutModal" class="admin-about-modal">
+        <div class="admin-about-modal-content">
+            <h2>ComfyUI Auth Server v0.4.0</h2>
+            <p><strong>Advanced management and authentication system for multiple ComfyUI instances</strong></p>
+            
+            <h3>Key Features and Advantages:</h3>
+            <ul style="text-align: left; margin: 20px 0;">
+                <li><strong>Multi-User Architecture</strong> - Simultaneous management of multiple users with separate instances</li>
+                <li><strong>Intelligent Load Balancing</strong> - Automatic workload distribution between ComfyUI instances</li>
+                <li><strong>Enhanced Security</strong> - Rate limiting, bcrypt password hashing, customizable session timeouts</li>
+                <li><strong>Advanced Admin Interface</strong> - Real-time monitoring, session management, full control</li>
+                <li><strong>Integrated Chat System</strong> - Direct communication between users and administrators</li>
+                <li><strong>Personalized Workflow Browser</strong> - Each user has their own workspace for workflows</li>
+                <li><strong>Session Management</strong> - Customizable timeout, expiry notifications, session renewal</li>
+                <li><strong>Performance Monitoring</strong> - Real-time instance status, maximum capacity alerts</li>
+                <li><strong>Backup & Restore</strong> - Automatic configuration saving, easy recovery</li>
+                <li><strong>Scalability</strong> - Easy addition of new users and resources</li>
+                <li><strong>Nginx Reverse Proxy Support</strong> - Full support for nginx with Basic Authentication</li>
+            </ul>
+
+            <h3>Security Features:</h3>
+            <ul style="text-align: left; margin: 15px 0;">
+                <li>Authentication with hashed passwords (bcrypt)</li>
+                <li>Protection against brute-force attacks</li>
+                <li>Configurable session timeout per user</li>
+                <li>Temporary user blocking for security</li>
+                <li>Suspicious IP monitoring</li>
+                <li>Nginx Basic Auth support (per user or global)</li>
+            </ul>
+
+            <h3>For Administrators:</h3>
+            <ul style="text-align: left; margin: 15px 0;">
+                <li>Real-time statistics dashboard</li>
+                <li>Complete user management</li>
+                <li>Flexible instance configuration</li>
+                <li>Chat system with users</li>
+                <li>Active session control</li>
+                <li>Workflow directory configuration</li>
+                <li>Nginx authentication configuration per user</li>
+            </ul>
+
+            <div style="background: #2a2a2a; border-left: 4px solid #007bff; padding: 15px; margin: 20px 0;">
+                <h4>Main Benefits:</h4>
+                <p><strong>Resource Optimization</strong> - Balanced distribution of computing load<br>
+                <strong>User Isolation</strong> - Each user works in a secure space<br>
+                <strong>Easy Management</strong> - Single interface for all instances<br>
+                <strong>Scalability</strong> - Always add new users and resources<br>
+                <strong>Nginx Integration</strong> - Works seamlessly with nginx reverse proxies</p>
+            </div>
+
+            <p><strong>Version:</strong> 0.4.0 - Report issues through the chat system to administrators</p>
+            
+            <p><em>Version 0.4.0 - With nginx reverse proxy support<br>
+            Report any issues or improvement suggestions through the chat system!</em></p>
+            
+            <button class="admin-about-close-btn" onclick="closeAboutModal()">Understood</button>
+        </div>
+    </div>
+
+    <!-- Edit User Modal -->
+    <div id="editUserModal" class="edit-modal">
+        <div class="edit-modal-content">
+            <h2>Edit User</h2>
+            <form id="editUserForm">
+                <input type="hidden" id="editOriginalUsername">
+                <div class="form-group">
+                    <label for="editUsername">Username:</label>
+                    <input type="text" id="editUsername" required>
+                </div>
+                <div class="form-group">
+                    <label for="editPassword">Password (leave empty to keep current):</label>
+                    <input type="password" id="editPassword" placeholder="Leave empty to keep current password">
+                </div>
+                <div class="form-group">
+                    <label for="editComfyUrl">ComfyUI URL:</label>
+                    <input type="text" id="editComfyUrl" required>
+                </div>
+                <div class="form-group">
+                    <label for="editMaxInstances">Max Instances:</label>
+                    <input type="number" id="editMaxInstances" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="editSessionTimeout">Session Timeout (minutes):</label>
+                    <input type="number" id="editSessionTimeout" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="editEnabled">Account Enabled:</label>
+                    <select id="editEnabled" required>
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled</option>
+                    </select>
+                </div>
+                
+                <!-- Nginx Auth Settings -->
+                <div class="nginx-section" style="margin: 15px 0;">
+                    <h4>Nginx Authentication</h4>
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="editNginxEnabled">
+                            <label for="editNginxEnabled" style="display: inline;">Enable nginx Basic Auth</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="editNginxUsername">Nginx Username:</label>
+                        <input type="text" id="editNginxUsername" placeholder="Username for nginx Basic Auth">
+                    </div>
+                    <div class="form-group">
+                        <label for="editNginxPassword">Nginx Password:</label>
+                        <input type="password" id="editNginxPassword" placeholder="Password for nginx Basic Auth">
+                    </div>
+                </div>
+                
+                <div class="edit-modal-buttons">
+                    <button type="button" class="edit-modal-btn cancel" onclick="closeEditModal()">Cancel</button>
+                    <button type="submit" class="edit-modal-btn save">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="header">
+            <h1>ComfyUI Admin Dashboard</h1>
+            <div>
+                <button class="about-btn" onclick="openAboutModal()" style="background: #007bff; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; margin-right: 10px; font-size: 16px; width: 40px; height: 40px;">?</button>
+                <button class="logout-btn" onclick="adminLogout()">Logout</button>
+            </div>
+        </div>
+        
+        <div class="tabs">
+            <div class="tab active" onclick="showTab('status')">Status</div>
+            <div class="tab" onclick="showTab('settings')">Settings</div>
+            <div class="tab" onclick="showTab('nginx')">Nginx Auth</div>
+            <div class="tab" onclick="showTab('security')">Security</div>
+            <div class="tab" onclick="showTab('chat')">Chat</div>
+        </div>
+
+        <div id="status" class="tab-content active">
+            <h2>System Status</h2>
+            <div id="statusGrid" class="status-grid">
+                <!-- Status cards will be loaded here -->
+            </div>
+            
+            <div class="session-list">
+                <h3>Active Sessions</h3>
+                <div id="sessionList">
+                    <!-- Sessions will be loaded here -->
+                </div>
+            </div>
+            
+            <div class="session-list">
+                <h3>Blocked Users</h3>
+                <div id="blockedUsersList">
+                    <!-- Blocked users will be loaded here -->
+                </div>
+            </div>
+            
+            <button onclick="loadStatus()">Refresh</button>
+        </div>
+
+        <div id="settings" class="tab-content">
+            <h2>User Management</h2>
+            <div class="form-group">
+                <label>Username:</label>
+                <input type="text" id="username" placeholder="Enter username">
+            </div>
+            <div class="form-group">
+                <label>Password:</label>
+                <input type="password" id="password" placeholder="Enter password">
+            </div>
+            <div class="form-group">
+                <label>ComfyUI URL:</label>
+                <input type="text" id="comfyUrl" placeholder="http://ip:port or https://domain.com">
+            </div>
+            <div class="form-group">
+                <label>Max Instances:</label>
+                <input type="number" id="maxInstances" value="2" min="0">
+                <div class="help-text">Maximum number of simultaneous sessions (0 = unlimited)</div>
+            </div>
+            <div class="form-group">
+                <label>Session Timeout (minutes):</label>
+                <input type="number" id="sessionTimeout" value="60" min="0">
+                <div class="help-text">Session duration in minutes (0 = infinite session)</div>
+            </div>
+            <div class="form-group">
+                <label>Account Enabled:</label>
+                <select id="enabled">
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                </select>
+            </div>
+            
+            <!-- Nginx Auth for new user -->
+            <div class="nginx-section">
+                <h3>Nginx Authentication (Optional)</h3>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="nginxEnabled">
+                        <label for="nginxEnabled" style="display: inline;">Enable nginx Basic Auth for this user</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Nginx Username:</label>
+                    <input type="text" id="nginxUsername" placeholder="Username for nginx Basic Auth">
+                </div>
+                <div class="form-group">
+                    <label>Nginx Password:</label>
+                    <input type="password" id="nginxPassword" placeholder="Password for nginx Basic Auth">
+                </div>
+            </div>
+            
+            <button onclick="addUser()">Add User</button>
+
+            <h3>Existing Users</h3>
+            <div id="userList">
+                <!-- User list will be loaded here -->
+            </div>
+            
+            <h2>Workflow Settings</h2>
+            <div class="form-group">
+                <label>Workflow Root Directory:</label>
+                <input type="text" id="workflowRoot" placeholder="/path/to/workflows" style="width: 100%;">
+                <div class="help-text">Root directory where user workflow folders will be created</div>
+            </div>
+            <button onclick="saveWorkflowSettings()" class="security">Save Workflow Settings</button>
+            <div id="workflowSettingsMessage" style="margin-top: 15px;"></div>
+        </div>
+
+        <div id="nginx" class="tab-content">
+            <h2>Nginx Authentication Settings</h2>
+            
+            <div class="nginx-section">
+                <h3>Global Nginx Authentication</h3>
+                <p>Global settings apply to all users unless overridden per user.</p>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="globalNginxEnabled">
+                        <label for="globalNginxEnabled" style="display: inline;">Enable global nginx Basic Auth</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Global Username:</label>
+                    <input type="text" id="globalNginxUsername" placeholder="Username for nginx Basic Auth">
+                </div>
+                <div class="form-group">
+                    <label>Global Password:</label>
+                    <input type="password" id="globalNginxPassword" placeholder="Password for nginx Basic Auth">
+                </div>
+                <button onclick="saveGlobalNginxAuth()" class="security">Save Global Settings</button>
+            </div>
+            
+            <h3>Per-User Nginx Authentication</h3>
+            <div id="nginxUsersList">
+                <!-- User nginx settings will be loaded here -->
+            </div>
+        </div>
+
+        <div id="security" class="tab-content">
+            <h2>Security Settings</h2>
+            
+            <div class="form-group">
+                <label>Admin Password Protection:</label>
+                <div id="securityStatus" class="security-status">
+                    <!-- Security status will be loaded here -->
+                </div>
+                <button onclick="toggleSecurity()" id="toggleSecurityBtn">Toggle Protection</button>
+            </div>
+
+            <div class="form-group">
+                <label>Current Admin Password:</label>
+                <input type="password" id="currentPassword" placeholder="Enter current password">
+            </div>
+            <div class="form-group">
+                <label>New Admin Password:</label>
+                <input type="password" id="newPassword" placeholder="Enter new password">
+            </div>
+            <div class="form-group">
+                <label>Confirm New Password:</label>
+                <input type="password" id="confirmPassword" placeholder="Confirm new password">
+            </div>
+            <button class="security" onclick="changePassword()">Change Password</button>
+
+            <div id="passwordMessage" style="margin-top: 15px;"></div>
+        </div>
+
+        <div id="chat" class="tab-content">
+            <h2>User Chat</h2>
+            <div class="chat-section">
+                <div class="chat-user-list">
+                    <h4>Active Users</h4>
+                    <div id="chatUserList">
+                        <!-- User list for chat will be loaded here -->
+                    </div>
+                </div>
+                
+                <div id="chatArea" style="display: none;">
+                    <h4>Chat with <span id="chatWithUser"></span></h4>
+                    <div class="chat-messages-admin" id="adminChatMessages">
+                        <!-- Chat messages will be loaded here -->
+                    </div>
+                    
+                    <div class="file-preview-admin" id="adminFilePreview"></div>
+                    
+                    <div class="chat-input-admin">
+                        <input type="text" id="adminChatInput" placeholder="Type your message...">
+                        <button onclick="sendAdminMessage()">Send</button>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <input type="file" class="chat-file-input" id="adminChatFileInput" multiple accept="*/*" style="display: none;">
+                        <button class="chat-file-btn" onclick="document.getElementById('adminChatFileInput').click()">Attach Files</button>
+                    </div>
+                </div>
+                
+                <div id="noUserSelected" style="text-align: center; padding: 40px; color: #666;">
+                    <p>Select a user from the list to start chatting</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedChatUser = null;
+        let adminChatWebSocket = null;
+        let adminChatAutoRefresh = null;
+        let adminAttachedFiles = [];
+
+        function showTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+            
+            if (tabName === 'chat') {
+                loadChatUsers();
+                connectAdminChatWebSocket();
+                startAdminChatAutoRefresh();
+            } else if (tabName === 'nginx') {
+                loadGlobalNginxAuth();
+                loadNginxUsersList();
+            } else {
+                stopAdminChatAutoRefresh();
+            }
+        }
+
+        function showSaveNotification() {
+            const notification = document.getElementById('saveNotification');
+            notification.style.display = 'block';
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
+        }
+
+        function openAboutModal() {
+            document.getElementById('aboutModal').style.display = 'block';
+        }
+
+        function closeAboutModal() {
+            document.getElementById('aboutModal').style.display = 'none';
+        }
+
+        function openEditModal(username, userData) {
+            document.getElementById('editOriginalUsername').value = username;
+            document.getElementById('editUsername').value = username;
+            document.getElementById('editComfyUrl').value = userData.comfy_url;
+            document.getElementById('editMaxInstances').value = userData.max_instances;
+            document.getElementById('editSessionTimeout').value = userData.session_timeout;
+            document.getElementById('editPassword').value = '';
+            document.getElementById('editEnabled').value = userData.enabled ? 'true' : 'false';
+            
+            // Nginx auth data
+            const nginxAuth = userData.nginx_auth || { enabled: false, username: '', password: '' };
+            document.getElementById('editNginxEnabled').checked = nginxAuth.enabled;
+            document.getElementById('editNginxUsername').value = nginxAuth.username || '';
+            document.getElementById('editNginxPassword').value = '';
+            
+            document.getElementById('editUserModal').style.display = 'block';
+        }
+
+        function closeEditModal() {
+            document.getElementById('editUserModal').style.display = 'none';
+            document.getElementById('editUserForm').reset();
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('aboutModal');
+            const editModal = document.getElementById('editUserModal');
+            if (event.target == modal) {
+                closeAboutModal();
+            }
+            if (event.target == editModal) {
+                closeEditModal();
+            }
+        }
+
+        // Handle edit form submission
+        document.getElementById('editUserForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const originalUsername = document.getElementById('editOriginalUsername').value;
+            
+            // Build nginx auth object
+            const nginxAuth = {
+                enabled: document.getElementById('editNginxEnabled').checked,
+                username: document.getElementById('editNginxUsername').value,
+                password: document.getElementById('editNginxPassword').value
+            };
+            
+            const userData = {
+                username: document.getElementById('editUsername').value,
+                password: document.getElementById('editPassword').value,
+                comfy_url: document.getElementById('editComfyUrl').value,
+                max_instances: parseInt(document.getElementById('editMaxInstances').value),
+                session_timeout: parseInt(document.getElementById('editSessionTimeout').value),
+                enabled: document.getElementById('editEnabled').value === 'true',
+                nginx_auth: nginxAuth
+            };
+            
+            updateUser(originalUsername, userData);
+        });
+
+        function loadStatus() {
+            fetch('/admin/api/status')
+                .then(r => r.json())
+                .then(data => updateStatus(data));
+                
+            fetch('/admin/api/sessions')
+                .then(r => r.json())
+                .then(data => updateSessions(data));
+
+            fetch('/admin/api/security')
+                .then(r => r.json())
+                .then(data => updateSecurity(data));
+                
+            fetch('/admin/api/blocked-users')
+                .then(r => r.json())
+                .then(data => updateBlockedUsers(data));
+        }
+
+        function updateStatus(data) {
+            const grid = document.getElementById('statusGrid');
+            grid.innerHTML = '';
+            
+            for (const [username, userData] of Object.entries(data.users)) {
+                const card = document.createElement('div');
+                card.className = `status-card ${userData.instances >= userData.max_instances && userData.max_instances > 0 ? 'full' : 
+                                 userData.instances > 0 ? 'limited' : ''}`;
+                
+                const timeoutText = userData.session_timeout === 0 ? 'Infinite' : userData.session_timeout + ' minutes';
+                
+                const nginxBadge = userData.nginx_auth && userData.nginx_auth.enabled ? 
+                    '<span class="nginx-badge">nginx auth</span>' : '';
+                
+                card.innerHTML = `
+                    <h3>${username} ${nginxBadge}</h3>
+                    <p>Instances: ${userData.instances}/${userData.max_instances === 0 ? '∞' : userData.max_instances}</p>
+                    <p>Session Timeout: ${timeoutText}</p>
+                    <p>URL: ${userData.comfy_url}</p>
+                    <p>Status: ${userData.ready ? 'Ready' : 'Not Ready'}</p>
+                    <p>Enabled: ${userData.enabled ? 'Yes' : 'No'}</p>
+                `;
+                grid.appendChild(card);
+            }
+        }
+
+        function updateSessions(data) {
+            const list = document.getElementById('sessionList');
+            list.innerHTML = '';
+            
+            data.sessions.forEach(session => {
+                const item = document.createElement('div');
+                item.className = 'session-item';
+                item.innerHTML = `
+                    <div class="session-info">
+                        <strong>${session.user}</strong> - ${session.session_id.substring(0, 8)}...
+                        <div class="remaining-time">${session.remaining_time}</div>
+                    </div>
+                    <div class="session-actions">
+                        <button class="delete" onclick="forceLogout('${session.session_id}')">Force Logout</button>
+                    </div>
+                `;
+                list.appendChild(item);
+            });
+        }
+
+        function updateBlockedUsers(data) {
+            const list = document.getElementById('blockedUsersList');
+            list.innerHTML = '';
+            
+            if (Object.keys(data.blocked_users).length === 0) {
+                list.innerHTML = '<p>No users are currently blocked.</p>';
+                return;
+            }
+            
+            for (const [username, userData] of Object.entries(data.blocked_users)) {
+                const item = document.createElement('div');
+                item.className = 'blocked-user-item';
+                item.innerHTML = `
+                    <div class="session-info">
+                        <strong>${username}</strong> - Blocked for: ${userData.remaining_time}
+                    </div>
+                    <div class="session-actions">
+                        <button class="security" onclick="unblockUser('${username}')">Unblock User</button>
+                    </div>
+                `;
+                list.appendChild(item);
+            }
+        }
+
+        function updateSecurity(data) {
+            const statusDiv = document.getElementById('securityStatus');
+            const toggleBtn = document.getElementById('toggleSecurityBtn');
+            
+            if (data.enabled) {
+                statusDiv.innerHTML = 'Password Protection: ENABLED';
+                statusDiv.className = 'security-status security-on';
+                toggleBtn.textContent = 'Disable Protection';
+            } else {
+                statusDiv.innerHTML = 'Password Protection: DISABLED';
+                statusDiv.className = 'security-status security-off';
+                toggleBtn.textContent = 'Enable Protection';
+            }
+        }
+
+        function toggleSecurity() {
+            fetch('/admin/api/security/toggle', {method: 'POST'})
+                .then(r => r.json())
+                .then(data => {
+                    updateSecurity(data);
+                    showSaveNotification();
+                });
+        }
+
+        function changePassword() {
+            const currentPassword = document.getElementById('currentPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const messageDiv = document.getElementById('passwordMessage');
+
+            if (newPassword !== confirmPassword) {
+                messageDiv.innerHTML = '<div style="color: #dc3545;">New passwords do not match!</div>';
+                return;
+            }
+
+            if (newPassword.length < 3) {
+                messageDiv.innerHTML = '<div style="color: #dc3545;">Password must be at least 3 characters!</div>';
+                return;
+            }
+
+            fetch('/admin/api/security/password', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    current_password: currentPassword,
+                    new_password: newPassword
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    messageDiv.innerHTML = '<div style="color: #28a745;">Password changed successfully!</div>';
+                    document.getElementById('currentPassword').value = '';
+                    document.getElementById('newPassword').value = '';
+                    document.getElementById('confirmPassword').value = '';
+                    showSaveNotification();
+                } else {
+                    messageDiv.innerHTML = '<div style="color: #dc3545;">' + data.error + '</div>';
+                }
+            });
+        }
+
+        function addUser() {
+            const nginxAuth = {
+                enabled: document.getElementById('nginxEnabled').checked,
+                username: document.getElementById('nginxUsername').value,
+                password: document.getElementById('nginxPassword').value
+            };
+            
+            const user = {
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value,
+                comfy_url: document.getElementById('comfyUrl').value,
+                max_instances: parseInt(document.getElementById('maxInstances').value),
+                session_timeout: parseInt(document.getElementById('sessionTimeout').value),
+                enabled: document.getElementById('enabled').value === 'true',
+                nginx_auth: nginxAuth
+            };
+
+            fetch('/admin/api/users', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(user)
+            }).then(() => {
+                loadUsers();
+                clearForm();
+                showSaveNotification();
+            });
+        }
+
+        function loadUsers() {
+            fetch('/admin/api/users')
+                .then(r => r.json())
+                .then(users => {
+                    const list = document.getElementById('userList');
+                    list.innerHTML = '';
+                    
+                    for (const [username, userData] of Object.entries(users)) {
+                        const timeoutText = userData.session_timeout === 0 ? 'Infinite' : userData.session_timeout + ' minutes';
+                        const maxInstancesText = userData.max_instances === 0 ? '∞' : userData.max_instances;
+                        const enabledText = userData.enabled ? 'Enabled' : 'Disabled';
+                        const enabledBtnText = userData.enabled ? 'Disable' : 'Enable';
+                        const enabledBtnClass = userData.enabled ? 'delete' : 'security';
+                        
+                        const nginxBadge = userData.nginx_auth && userData.nginx_auth.enabled ? 
+                            '<span class="nginx-badge">nginx auth</span>' : '';
+                        
+                        const div = document.createElement('div');
+                        div.className = 'user-item';
+                        div.innerHTML = `
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding: 10px; background: #333; ${!userData.enabled ? 'opacity: 0.7;' : ''}">
+                                <div>
+                                    <strong>${username}</strong> ${nginxBadge}<br>
+                                    ${userData.comfy_url} (${userData.instances}/${maxInstancesText} instances, Timeout: ${timeoutText}, Status: ${enabledText})
+                                </div>
+                                <div>
+                                    <button class="${enabledBtnClass}" onclick="toggleUserEnabled('${username}', ${!userData.enabled})">${enabledBtnText}</button>
+                                    <button class="edit" onclick="openEditModal('${username}', ${JSON.stringify(userData).replace(/"/g, '&quot;')})">Edit</button>
+                                    <button class="delete" onclick="deleteUser('${username}')">Delete</button>
+                                </div>
+                            </div>
+                        `;
+                        list.appendChild(div);
+                    }
+                });
+        }
+
+        function toggleUserEnabled(username, newState) {
+            if (!username) return;
+            
+            fetch('/admin/api/users/' + username, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    username: username,
+                    enabled: newState
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadUsers();
+                    showSaveNotification();
+                } else {
+                    alert('Error updating user: ' + data.error);
+                }
+            })
+            .catch(error => {
+                alert('Error updating user: ' + error);
+            });
+        }
+
+        function updateUser(originalUsername, userData) {
+            fetch('/admin/api/users/' + originalUsername, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(userData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    closeEditModal();
+                    loadUsers();
+                    showSaveNotification();
+                } else {
+                    alert('Error updating user: ' + data.error);
+                }
+            })
+            .catch(error => {
+                alert('Error updating user: ' + error);
+            });
+        }
+
+        function deleteUser(username) {
+            if (confirm('Delete user ' + username + '?')) {
+                fetch('/admin/api/users/' + encodeURIComponent(username), {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'}
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        loadUsers();
+                        showSaveNotification();
+                        alert('User deleted successfully!');
+                    } else {
+                        alert('Error deleting user: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    alert('Error deleting user: ' + error);
+                });
+            }
+        }
+
+        function forceLogout(sessionId) {
+            if (confirm('Force logout this session?')) {
+                fetch('/admin/api/sessions/' + sessionId, {method: 'DELETE'})
+                    .then(() => loadStatus());
+            }
+        }
+
+        function unblockUser(username) {
+            if (confirm('Unblock user ' + username + '?')) {
+                fetch('/admin/api/blocked-users/' + username, {method: 'DELETE'})
+                    .then(() => {
+                        loadStatus();
+                    });
+            }
+        }
+
+        function adminLogout() {
+            if (confirm('Logout from admin dashboard?')) {
+                fetch('/admin/logout', {method: 'POST'})
+                    .then(() => {
+                        window.location.href = '/admin/login';
+                    });
+            }
+        }
+
+        function clearForm() {
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+            document.getElementById('comfyUrl').value = '';
+            document.getElementById('maxInstances').value = '2';
+            document.getElementById('sessionTimeout').value = '60';
+            document.getElementById('enabled').value = 'true';
+            document.getElementById('nginxEnabled').checked = false;
+            document.getElementById('nginxUsername').value = '';
+            document.getElementById('nginxPassword').value = '';
+        }
+
+        // Nginx Auth Functions
+        function loadGlobalNginxAuth() {
+            fetch('/admin/api/nginx-auth/global')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('globalNginxEnabled').checked = data.enabled;
+                    document.getElementById('globalNginxUsername').value = data.username || '';
+                    document.getElementById('globalNginxPassword').value = '';
+                });
+        }
+
+        function saveGlobalNginxAuth() {
+            const globalAuth = {
+                enabled: document.getElementById('globalNginxEnabled').checked,
+                username: document.getElementById('globalNginxUsername').value,
+                password: document.getElementById('globalNginxPassword').value
+            };
+            
+            fetch('/admin/api/nginx-auth/global', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(globalAuth)
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    showSaveNotification();
+                    document.getElementById('globalNginxPassword').value = '';
+                } else {
+                    alert('Error saving global nginx auth: ' + data.error);
+                }
+            });
+        }
+
+        function loadNginxUsersList() {
+            fetch('/admin/api/users')
+                .then(r => r.json())
+                .then(users => {
+                    const list = document.getElementById('nginxUsersList');
+                    list.innerHTML = '';
+                    
+                    for (const [username, userData] of Object.entries(users)) {
+                        const nginxAuth = userData.nginx_auth || { enabled: false, username: '' };
+                        
+                        const div = document.createElement('div');
+                        div.className = 'nginx-user-item';
+                        div.innerHTML = `
+                            <div class="nginx-user-header">
+                                <h4>${username}</h4>
+                                <span class="nginx-badge ${!nginxAuth.enabled ? 'disabled' : ''}">
+                                    ${nginxAuth.enabled ? 'Enabled' : 'Disabled'}
+                                </span>
+                            </div>
+                            <div class="nginx-user-details">
+                                <div>
+                                    <strong>Status:</strong> ${nginxAuth.enabled ? 'Active' : 'Inactive'}
+                                </div>
+                                <div>
+                                    <strong>Username:</strong> ${nginxAuth.username || 'Not set'}
+                                </div>
+                                <div>
+                                    <strong>Password:</strong> ${nginxAuth.enabled ? '●●●●●●●●' : 'Not set'}
+                                </div>
+                            </div>
+                            <div>
+                                <button class="edit" onclick="openEditModal('${username}', ${JSON.stringify(userData).replace(/"/g, '&quot;')})">Edit</button>
+                            </div>
+                        `;
+                        list.appendChild(div);
+                    }
+                });
+        }
+
+        // Workflow Settings Functions
+        function loadWorkflowSettings() {
+            fetch('/admin/api/workflow-settings')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('workflowRoot').value = data.workflow_root;
+                });
+        }
+
+        function saveWorkflowSettings() {
+            const workflowRoot = document.getElementById('workflowRoot').value;
+            const messageDiv = document.getElementById('workflowSettingsMessage');
+            
+            if (!workflowRoot) {
+                messageDiv.innerHTML = '<div style="color: #dc3545;">Workflow root path is required!</div>';
+                return;
+            }
+            
+            fetch('/admin/api/workflow-settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    workflow_root: workflowRoot
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    messageDiv.innerHTML = '<div style="color: #28a745;">' + data.message + '</div>';
+                    if (data.directory_exists) {
+                        messageDiv.innerHTML += '<div style="color: #28a745;">Directory exists and is accessible</div>';
+                    } else {
+                        messageDiv.innerHTML += '<div style="color: #ffc107;">Directory does not exist or is not accessible</div>';
+                    }
+                    showSaveNotification();
+                } else {
+                    messageDiv.innerHTML = '<div style="color: #dc3545;">' + data.error + '</div>';
+                }
+            });
+        }
+
+        // Chat Functions for Admin
+        function loadChatUsers() {
+            fetch('/admin/api/chat/users')
+                .then(r => r.json())
+                .then(data => {
+                    const userList = document.getElementById('chatUserList');
+                    userList.innerHTML = '';
+                    
+                    if (data.users.length === 0) {
+                        userList.innerHTML = '<p>No active users</p>';
+                        return;
+                    }
+                    
+                    data.users.forEach(user => {
+                        const userItem = document.createElement('div');
+                        userItem.className = 'chat-user-item';
+                        userItem.onclick = () => selectChatUser(user.username);
+                        userItem.innerHTML = `
+                            <span>${user.username}</span>
+                            ${user.unread_count > 0 ? '<div class="unread-badge">' + user.unread_count + '</div>' : ''}
+                        `;
+                        userList.appendChild(userItem);
+                    });
+                });
+        }
+
+        function selectChatUser(username) {
+            selectedChatUser = username;
+            
+            // Update UI
+            document.querySelectorAll('.chat-user-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            event.target.closest('.chat-user-item').classList.add('active');
+            
+            document.getElementById('chatWithUser').textContent = username;
+            document.getElementById('chatArea').style.display = 'block';
+            document.getElementById('noUserSelected').style.display = 'none';
+            
+            // Load chat history
+            loadChatHistory(username);
+        }
+
+        function loadChatHistory(username) {
+            fetch('/admin/api/chat/messages/' + username)
+                .then(r => r.json())
+                .then(data => {
+                    const messagesDiv = document.getElementById('adminChatMessages');
+                    messagesDiv.innerHTML = '';
+                    
+                    data.messages.forEach(msg => {
+                        addAdminMessageToChat(msg.message, msg.from, msg.timestamp, msg.message_type, msg.file_data);
+                    });
+                    
+                    scrollAdminChatToBottom();
+                    
+                    // Mark messages as read
+                    fetch('/admin/api/chat/mark-read/' + username, {method: 'POST'});
+                });
+        }
+
+        function addAdminMessageToChat(message, from, timestamp, message_type = 'text', file_data = null) {
+            const messagesDiv = document.getElementById('adminChatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'chat-message-admin ' + (from === 'admin' ? 'admin' : 'user');
+            
+            const time = new Date(timestamp * 1000).toLocaleTimeString();
+            
+            let messageContent = message;
+            if (message_type === 'file' && file_data) {
+                messageContent = `
+                    <div>${message}</div>
+                    <div class="chat-file-message-admin">
+                        <span class="chat-file-icon-admin">📎</span>
+                        <span class="chat-file-name-admin">${file_data.filename}</span>
+                        <a href="/download-file/${file_data.id}" class="chat-file-download-admin" download="${file_data.filename}">Download</a>
+                    </div>
+                `;
+            }
+            
+            messageDiv.innerHTML = `
+                <div>${messageContent}</div>
+                <div class="chat-message-time-admin">${from === 'admin' ? 'You' : from} • ${time}</div>
+            `;
+            
+            messagesDiv.appendChild(messageDiv);
+            scrollAdminChatToBottom();
+        }
+
+        function scrollAdminChatToBottom() {
+            const messagesDiv = document.getElementById('adminChatMessages');
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function sendAdminMessage() {
+            if (!selectedChatUser) return;
+            
+            const input = document.getElementById('adminChatInput');
+            const message = input.value.trim();
+            
+            if (!message && adminAttachedFiles.length === 0) return;
+            
+            // Upload files first if any
+            if (adminAttachedFiles.length > 0) {
+                uploadAdminFiles(message);
+            } else {
+                sendAdminTextMessage(message);
+            }
+        }
+
+        function sendAdminTextMessage(message) {
+            if (adminChatWebSocket && adminChatWebSocket.readyState === WebSocket.OPEN) {
+                adminChatWebSocket.send(JSON.stringify({
+                    type: 'admin_send_message',
+                    to_user: selectedChatUser,
+                    message: message
+                }));
+                // Add message immediately for better UX
+                addAdminMessageToChat(message, 'admin', Date.now() / 1000);
+                document.getElementById('adminChatInput').value = '';
+                scrollAdminChatToBottom();
+            } else {
+                // Fallback to HTTP
+                fetch('/admin/api/chat/send', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        to_user: selectedChatUser,
+                        message: message
+                    })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('adminChatInput').value = '';
+                        loadChatHistory(selectedChatUser);
+                    }
+                });
+            }
+        }
+
+        function uploadAdminFiles(message) {
+            const formData = new FormData();
+            formData.append('message', message);
+            formData.append('to_user', selectedChatUser);
+            
+            adminAttachedFiles.forEach((file, index) => {
+                formData.append('file' + index, file);
+            });
+            
+            fetch('/admin/api/chat/upload-file', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    // Clear input and attached files
+                    document.getElementById('adminChatInput').value = '';
+                    adminAttachedFiles = [];
+                    updateAdminFilePreview();
+                    
+                    // Reload messages to show the new one with files
+                    loadChatHistory(selectedChatUser);
+                } else {
+                    alert('Error uploading files: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.log('Error uploading files:', error);
+                alert('Error uploading files: ' + error);
+            });
+        }
+
+        function handleAdminFileSelection() {
+            const fileInput = document.getElementById('adminChatFileInput');
+            const files = fileInput.files;
+            
+            for (let i = 0; i < files.length; i++) {
+                adminAttachedFiles.push(files[i]);
+            }
+            
+            updateAdminFilePreview();
+            fileInput.value = ''; // Reset file input
+        }
+
+        function updateAdminFilePreview() {
+            const preview = document.getElementById('adminFilePreview');
+            
+            if (adminAttachedFiles.length === 0) {
+                preview.style.display = 'none';
+                preview.innerHTML = '';
+                return;
+            }
+            
+            preview.style.display = 'block';
+            preview.innerHTML = '<strong>Attached files:</strong>';
+            
+            adminAttachedFiles.forEach((file, index) => {
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-preview-item-admin';
+                fileItem.innerHTML = `
+                    <span class="file-preview-name-admin">${file.name} (${formatFileSize(file.size)})</span>
+                    <button class="file-preview-remove-admin" onclick="removeAdminAttachedFile(${index})">Remove</button>
+                `;
+                preview.appendChild(fileItem);
+            });
+        }
+
+        function removeAdminAttachedFile(index) {
+            adminAttachedFiles.splice(index, 1);
+            updateAdminFilePreview();
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function connectAdminChatWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = protocol + '//' + window.location.host + '/admin/chat-ws';
+            
+            adminChatWebSocket = new WebSocket(wsUrl);
+            
+            adminChatWebSocket.onopen = function() {
+                console.log('Admin Chat WebSocket connected');
+            };
+            
+            adminChatWebSocket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (data.type === 'new_message') {
+                    // If we're currently chatting with this user, show the message
+                    if (selectedChatUser === data.from_user) {
+                        addAdminMessageToChat(data.message, data.from_user, data.timestamp, data.message_type, data.file_data);
+                    }
+                    // Reload user list to update unread counts
+                    loadChatUsers();
+                }
+            };
+            
+            adminChatWebSocket.onclose = function() {
+                console.log('Admin Chat WebSocket disconnected');
+                setTimeout(connectAdminChatWebSocket, 5000);
+            };
+        }
+
+        function startAdminChatAutoRefresh() {
+            // Refresh chat users and messages every 3 seconds
+            if (adminChatAutoRefresh) {
+                clearInterval(adminChatAutoRefresh);
+            }
+            adminChatAutoRefresh = setInterval(() => {
+                loadChatUsers();
+                if (selectedChatUser) {
+                    loadChatHistory(selectedChatUser);
+                }
+            }, 3000);
+        }
+
+        function stopAdminChatAutoRefresh() {
+            if (adminChatAutoRefresh) {
+                clearInterval(adminChatAutoRefresh);
+                adminChatAutoRefresh = null;
+            }
+        }
+
+        // Handle Enter key in admin chat
+        document.getElementById('adminChatInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendAdminMessage();
+            }
+        });
+
+        // Handle file input change for admin chat
+        document.getElementById('adminChatFileInput').addEventListener('change', function() {
+            handleAdminFileSelection();
+        });
+
+        // Load initial data
+        loadStatus();
+        loadUsers();
+        loadWorkflowSettings();
+        setInterval(loadStatus, 5000); // Refresh every 5 seconds
+    </script>
+</body>
+</html>

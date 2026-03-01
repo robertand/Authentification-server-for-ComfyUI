@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html><head><title>Session Expired</title><meta charset="utf-8">
+<style>
+    body {font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin-top: 100px; background: #1a1a1a; color: #e0e0e0;}
+    .container {width: 500px; margin: 0 auto; background: #2a2a2a; padding: 30px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.5);}
+    .warning {color: #ffc107; font-size: 18px; margin-bottom: 20px;}
+    .info {color: #17a2b8; margin-bottom: 30px;}
+    .btn {background: #007bff; color: white; border: none; padding: 15px 30px; border-radius: 5px; cursor: pointer; text-decoration: none; display: inline-block; font-size: 16px; margin-top: 20px;}
+    .btn:hover {background: #0056b3;}
+    .about-btn-login {
+        position: fixed;
+        top: 15px;
+        right: 15px;
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 16px;
+        width: 40px;
+        height: 40px;
+        z-index: 1000;
+    }
+    .about-btn-login:hover {
+        background: #0056b3;
+    }
+</style></head>
+<body>
+    <button class="about-btn-login" onclick="openAboutModal()">?</button>
+    <div class="container">
+        <div class="warning">Session Expired</div>
+        <div class="info">
+            <p>Your session has expired due to inactivity.</p>
+            <p>Please login again to continue using ComfyUI.</p>
+        </div>
+        <a href="/login" class="btn">Login Again</a>
+    </div>
+    {about_modal}
+</body></html>

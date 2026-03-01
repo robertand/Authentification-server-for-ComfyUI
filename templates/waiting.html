@@ -1,0 +1,29 @@
+<!DOCTYPE html><html><head><title>Loading...</title>
+<meta http-equiv="refresh" content="3">
+<style>
+    body{font-family:'Segoe UI', Arial;text-align:center;margin-top:100px;background:#1a1a1a;color:#e0e0e0;}
+    .about-btn-login {
+        position: fixed;
+        top: 15px;
+        right: 15px;
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 16px;
+        width: 40px;
+        height: 40px;
+        z-index: 1000;
+    }
+    .about-btn-login:hover {
+        background: #0056b3;
+    }
+</style>
+</head><body>
+    <button class="about-btn-login" onclick="openAboutModal()">?</button>
+    <h2>ComfyUI is loading...</h2>
+    <p>Please wait 1-2 minutes. The page will refresh automatically.</p>
+    {about_modal}
+</body></html>

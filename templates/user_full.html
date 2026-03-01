@@ -1,0 +1,36 @@
+<!DOCTYPE html><html><head><title>User Limit Reached</title>
+<meta charset="utf-8">
+<style>
+body{font-family:'Segoe UI', Arial;text-align:center;margin-top:100px;background:#1a1a1a;color:#e0e0e0;}
+.container{width:500px;margin:0 auto;background:#2a2a2a;padding:30px;border-radius:10px;}
+.warning{color:#ffc107;font-size:18px;margin-bottom:20px;}
+.btn{background:#007bff;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;text-decoration:none;display:inline-block;margin:5px;}
+.about-btn-login {
+    position: fixed;
+    top: 15px;
+    right: 15px;
+    background: #007bff;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    width: 40px;
+    height: 40px;
+    z-index: 1000;
+}
+.about-btn-login:hover {
+    background: #0056b3;
+}
+</style></head>
+<body>
+    <button class="about-btn-login" onclick="openAboutModal()">?</button>
+    <div class="container">
+        <div class="warning">User Limit Reached</div>
+        <p>User <strong>{username}</strong> has reached the maximum limit of {max_instances} simultaneous instances.</p>
+        <p>Please try another user or wait for someone to log out.</p>
+        <a href="/login" class="btn">Try Another User</a>
+    </div>
+    {about_modal}
+</body></html>

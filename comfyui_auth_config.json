@@ -1,0 +1,41 @@
+{
+  "users": {
+    "user2": {
+      "password": "$2b$12$3DeEflfHaAShmLyFECpavuBSwYi6pK9JJKoGJrkscqJEC3i1b85Ie",
+      "comfy_url": "http://10.129.131.12:8188",
+      "instances": 0,
+      "max_instances": 2,
+      "session_timeout": 60,
+      "enabled": true
+    },
+    "user3": {
+      "password": "$2b$12$TF3rYIOZeEyjgtP0caDJvuSv2qe5G5gDYGhn6vt73RNLGnYyOyEj.",
+      "comfy_url": "http://10.129.131.13:8188",
+      "instances": 0,
+      "max_instances": 2,
+      "session_timeout": 60,
+      "enabled": true
+    },
+    "user4": {
+      "password": "$2b$12$Qnyk79WcRaIfz.73Cy7OFejAPYRfjRFGWiErtlWGiJmNSuWtx4T1.",
+      "comfy_url": "http://10.129.131.15:8188",
+      "instances": 0,
+      "max_instances": 2,
+      "session_timeout": 60,
+      "enabled": true
+    },
+    "user_ro": {
+      "password": "$2b$12$5V3DGUJPYaSQkVoerSrHTu1kMrc.GVKvFA1eEguTKPfXwQuF02DG.",
+      "comfy_url": "https://com-gpu0.ai.protv.ro",
+      "instances": 0,
+      "max_instances": 2,
+      "session_timeout": 60,
+      "enabled": true
+    }
+  },
+  "admin": {
+    "password": "$2b$12$jZMZ1A6kdk6X46xAa4nHjONAurdfNM5BV0DNI2ZUVR1ihXQCX4zwm",
+    "enabled": true
+  },
+  "workflow_root": "/mnt/prouser/spatiu/ComfyUI/workflows"
+}
