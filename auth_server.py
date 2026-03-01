@@ -394,7 +394,9 @@ def check_single_instance(comfy_url, nginx_auth=None):
     global comfy_instances_ready
     for i in range(60):
         try:
-            headers = {}
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
             
             if nginx_auth and nginx_auth.get("enabled", False):
                 auth_string = f"{nginx_auth['username']}:{nginx_auth['password']}"
@@ -405,8 +407,11 @@ def check_single_instance(comfy_url, nginx_auth=None):
                 encoded_auth = base64.b64encode(auth_string.encode()).decode()
                 headers['Authorization'] = f"Basic {encoded_auth}"
             
-            r = requests.get(f"{comfy_url}/", timeout=2, headers=headers)
-            if r.status_code in [200, 401]:
+            # verify=False pentru a suporta HTTPS cu certificate self-signed sau Cloudflare
+            r = requests.get(f"{comfy_url}/", timeout=5, headers=headers, verify=False)
+
+            # Acceptăm orice status code sub 500 (inclusiv 301/302/401/404) ca fiind "online"
+            if r.status_code < 500:
                 comfy_instances_ready[comfy_url] = True
                 log.info(f"ComfyUI instance {comfy_url} is ready!")
                 return
@@ -2223,23 +2228,26 @@ class MultiInstanceProxyHandler(BaseHandler):
             self.render("waiting.html", about_modal="")
             return
 
-        # Decodifică path-ul
-        try:
-            if path:
-                path = unquote(path)
-                path = path.replace('%2F', '/')
-                path = path.replace('%20', ' ')
-        except Exception as e:
-            log.warning(f"Error decoding path {path}: {e}")
+        # Obține path-ul brut din URI pentru a păstra encodarea (important pentru workflow-uri în subfoldere)
+        # Folosim self.request.uri și separăm query string pentru a obține path-ul brut, încă encodat
+        raw_uri = self.request.uri
+        if '?' in raw_uri:
+            raw_path = raw_uri.split('?')[0]
+        else:
+            raw_path = raw_uri
 
-        # Construiește URL-ul țintă
+        # Elimină prefixul /comfy/ sau /comfy dacă există
+        if raw_path.startswith('/comfy/'):
+            raw_path = raw_path[7:]
+        elif raw_path == '/comfy':
+            raw_path = ''
+        elif raw_path.startswith('/'):
+            raw_path = raw_path[1:]
+
+        # Construiește URL-ul țintă. Păstrăm slash-ul dacă raw_path este gol dar cererea originală avea unul
         comfy_url = comfy_url.rstrip('/')
+        target_url = f"{comfy_url}/{raw_path}"
         
-        # Dacă path-ul începe cu 'comfy/', elimină prefixul
-        if path and path.startswith('comfy/'):
-            path = path[6:]  # Elimină 'comfy/'
-        
-        target_url = f"{comfy_url}/{path.lstrip('/')}" if path else comfy_url
         if self.request.query:
             target_url += "?" + self.request.query
         
@@ -2641,12 +2649,14 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
             log.info(f"WebSocket connecting with session in URL: {comfy_ws_url_with_params}")
             
             # Conectează-te la WebSocket-ul destinație
+            # validate_cert=False pentru a suporta HTTPS/WSS cu certificate self-signed sau Cloudflare
             self.comfy_ws = await tornado.websocket.websocket_connect(
                 comfy_ws_url_with_params,
                 ping_interval=30,
                 ping_timeout=10,
                 connect_timeout=30,
-                max_message_size=500 * 1024 * 1024  # 500MB pentru fișiere mari
+                max_message_size=500 * 1024 * 1024,  # 500MB pentru fișiere mari
+                validate_cert=False
             )
             
             log.info(f"WebSocket connected successfully for user {self.username}")
