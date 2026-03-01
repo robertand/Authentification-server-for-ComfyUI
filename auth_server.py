@@ -2223,23 +2223,26 @@ class MultiInstanceProxyHandler(BaseHandler):
             self.render("waiting.html", about_modal="")
             return
 
-        # Decodifică path-ul
-        try:
-            if path:
-                path = unquote(path)
-                path = path.replace('%2F', '/')
-                path = path.replace('%20', ' ')
-        except Exception as e:
-            log.warning(f"Error decoding path {path}: {e}")
+        # Obține path-ul brut din URI pentru a păstra encodarea (important pentru workflow-uri în subfoldere)
+        # Folosim self.request.uri și separăm query string pentru a obține path-ul brut, încă encodat
+        raw_uri = self.request.uri
+        if '?' in raw_uri:
+            raw_path = raw_uri.split('?')[0]
+        else:
+            raw_path = raw_uri
+        
+        # Elimină prefixul /comfy/ sau /comfy dacă există
+        if raw_path.startswith('/comfy/'):
+            raw_path = raw_path[7:]
+        elif raw_path == '/comfy':
+            raw_path = ''
+        elif raw_path.startswith('/'):
+            raw_path = raw_path[1:]
 
-        # Construiește URL-ul țintă
+        # Construiește URL-ul țintă. Păstrăm slash-ul dacă raw_path este gol dar cererea originală avea unul
         comfy_url = comfy_url.rstrip('/')
+        target_url = f"{comfy_url}/{raw_path}"
         
-        # Dacă path-ul începe cu 'comfy/', elimină prefixul
-        if path and path.startswith('comfy/'):
-            path = path[6:]  # Elimină 'comfy/'
-        
-        target_url = f"{comfy_url}/{path.lstrip('/')}" if path else comfy_url
         if self.request.query:
             target_url += "?" + self.request.query
         
