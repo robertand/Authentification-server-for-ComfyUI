@@ -2478,7 +2478,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                 connect_timeout=30,
                 request_timeout=300,  # 5 minute pentru fișiere mari
                 validate_cert=False,
-                decompress_response=False,
+                decompress_response=True,
                 allow_nonstandard_methods=True,
                 streaming_callback=streaming_callback
             )
@@ -2572,10 +2572,11 @@ class MultiInstanceProxyHandler(BaseHandler):
                 flags=re.IGNORECASE
             )
             
-            # Găsește poziția pentru injectare
-            head_end_pos = html_content.find('</head>')
+            # Găsește poziția pentru injectare (case-insensitive)
+            match = re.search(r'</head>', html_content, re.IGNORECASE)
             
-            if head_end_pos != -1:
+            if match:
+                head_end_pos = match.start()
                 our_injection = f"""
                 <link rel="stylesheet" type="text/css" href="/static/css/styles.css">
                 <script src="/static/js/main.js"></script>
@@ -2598,7 +2599,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                     background: rgba(0,0,0,0.7);
                     padding: 2px 8px;
                     border-radius: 0 0 3px 3px;
-                    z-index: 10001;
+                    z-index: 20001;
                     font-size: 11px;
                     text-align: center;
                     backdrop-filter: blur(5px);
@@ -2615,7 +2616,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                     font-size: 14px;
                     font-weight: bold;
                     text-align: center;
-                    z-index: 10001;
+                    z-index: 20001;
                     height: 25px;
                     display: flex;
                     align-items: center;
@@ -2624,7 +2625,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                     position: fixed;
                     top: 0;
                     right: 0;
-                    z-index: 10001;
+                    z-index: 20001;
                     display: flex;
                     gap: 0;
                     height: 25px;
@@ -2675,12 +2676,15 @@ class MultiInstanceProxyHandler(BaseHandler):
                 .comfy-logout-btn:hover {{ background: #c82333; }}
 
                 /* Hide native ComfyUI workflow buttons if they appear */
-                button[title*="Workflow"], .comfy-workflow-btn { display: none !important; }
+                button[title*="Workflow"], .comfy-workflow-btn {{ display: none !important; }}
                 </style>
                 
                 <script id="comfy-auth-init">
-                document.addEventListener('DOMContentLoaded', function() {{
+                function initComfyAuthUI() {{
+                    if (document.getElementById('comfy-auth-overlay-added')) return;
+
                     const overlay = document.createElement('div');
+                    overlay.id = 'comfy-auth-overlay-added';
                     overlay.className = 'comfy-auth-overlay';
                     
                     const userInfo = document.createElement('div');
@@ -2718,11 +2722,25 @@ class MultiInstanceProxyHandler(BaseHandler):
                     if (typeof connectChatWebSocket === 'function') {{
                         setTimeout(connectChatWebSocket, 2000);
                     }}
-                }});
+                }}
+
+                if (document.readyState === 'loading') {{
+                    document.addEventListener('DOMContentLoaded', initComfyAuthUI);
+                }} else {{
+                    initComfyAuthUI();
+                }}
                 </script>
                 """
                 
                 html_content = html_content[:head_end_pos] + our_injection + html_content[head_end_pos:]
+            else:
+                # Dacă nu găsim </head>, injectăm la începutul body sau la începutul documentului
+                body_match = re.search(r'<body>', html_content, re.IGNORECASE)
+                if body_match:
+                    pos = body_match.end()
+                    html_content = html_content[:pos] + our_injection + html_content[pos:]
+                else:
+                    html_content = our_injection + html_content
             
             return html_content
             

@@ -383,22 +383,38 @@ function addMessageToChat(message, from, timestamp, message_type = 'text', file_
     
     const time = new Date(timestamp * 1000).toLocaleTimeString();
     
-    let messageContent = message;
+    const textWrapper = document.createElement('div');
+    textWrapper.textContent = message;
+    messageDiv.appendChild(textWrapper);
+
     if (message_type === 'file' && file_data) {
-        messageContent = `
-            <div>${message}</div>
-            <div class="chat-file-message">
-                <span class="chat-file-icon">📎</span>
-                <span class="chat-file-name">${file_data.filename}</span>
-                <a href="/download-file/${file_data.id}" class="chat-file-download" download="${file_data.filename}">Download</a>
-            </div>
-        `;
+        const fileDiv = document.createElement('div');
+        fileDiv.className = 'chat-file-message';
+
+        const icon = document.createElement('span');
+        icon.className = 'chat-file-icon';
+        icon.textContent = '📎';
+
+        const fileName = document.createElement('span');
+        fileName.className = 'chat-file-name';
+        fileName.textContent = file_data.filename;
+
+        const downloadLink = document.createElement('a');
+        downloadLink.href = `/download-file/${file_data.id}`;
+        downloadLink.className = 'chat-file-download';
+        downloadLink.textContent = 'Download';
+        downloadLink.setAttribute('download', file_data.filename);
+
+        fileDiv.appendChild(icon);
+        fileDiv.appendChild(fileName);
+        fileDiv.appendChild(downloadLink);
+        messageDiv.appendChild(fileDiv);
     }
     
-    messageDiv.innerHTML = `
-        <div>${messageContent}</div>
-        <div class="chat-message-time">${from === myUsername ? 'You' : from} • ${time}</div>
-    `;
+    const timeDiv = document.createElement('div');
+    timeDiv.className = 'chat-message-time';
+    timeDiv.textContent = `${from === myUsername ? 'You' : from} • ${time}`;
+    messageDiv.appendChild(timeDiv);
     
     // Add copy to clipboard functionality
     messageDiv.onclick = function() {

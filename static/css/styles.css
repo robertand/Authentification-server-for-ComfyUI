@@ -747,7 +747,7 @@
     box-shadow: -5px 0 25px rgba(0,0,0,0.5);
     overflow-y: auto;
     border-left: 1px solid rgba(255, 255, 255, 0.1);
-    display: block !important;
+    display: none !important;
 }
 
 .about-glass-card {
@@ -759,6 +759,7 @@
 }
 
 .about-drawer.open {
+    display: block !important;
     right: 0 !important;
 }
 
