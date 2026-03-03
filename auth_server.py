@@ -719,7 +719,8 @@ class LoginHandler(BaseHandler):
             RateLimiter.record_failed_attempt(client_ip)
             log.warning(f"Invalid input format from IP {client_ip}")
             self.render("login.html",
-                error='Invalid username or password format!'
+                error='Invalid username or password format!',
+                about_modal=ABOUT_DRAWER_HTML
             )
             return
 
@@ -1447,18 +1448,19 @@ class AdminLoginHandler(BaseHandler):
         client_ip = self.get_client_ip()
         
         if RateLimiter.is_blocked(client_ip):
-            self.write("""
+            self.write(f"""
             <div style="text-align: center; margin-top: 100px;">
                 <h2 style="color: #dc3545;">Too Many Failed Attempts</h2>
                 <p>Your IP has been temporarily blocked due to too many failed login attempts.</p>
                 <p>Please try again later.</p>
                 <a href="/admin/login">Try Again</a>
             </div>
+            {ABOUT_DRAWER_HTML}
             """)
             return
         
         # Afișează pagina de login
-        self.render("admin_login.html", error="")
+        self.render("admin_login.html", error="", about_modal=ABOUT_DRAWER_HTML)
 
     def post(self):
         client_ip = self.get_client_ip()
@@ -1484,7 +1486,7 @@ class AdminLoginHandler(BaseHandler):
             log.warning(f"Failed admin login attempt from IP {client_ip}")
             
             # Reafișează pagina cu eroare
-            self.render("admin_login.html", error="Invalid admin password!")
+            self.render("admin_login.html", error="Invalid admin password!", about_modal=ABOUT_DRAWER_HTML)
 
 class AdminLogoutHandler(BaseHandler):
     def get(self):
@@ -1505,7 +1507,7 @@ class AdminHandler(BaseHandler):
         if not is_admin_authenticated(self):
             self.redirect("/admin/login")
             return
-        self.render("admin.html")
+        self.render("admin.html", about_modal=ABOUT_DRAWER_HTML)
 
 class AdminStatusHandler(BaseHandler):
     def get(self):
@@ -2671,6 +2673,9 @@ class MultiInstanceProxyHandler(BaseHandler):
                 .comfy-about-btn:hover {{ background: #0056b3; }}
                 .comfy-settings-btn:hover {{ background: #218838; }}
                 .comfy-logout-btn:hover {{ background: #c82333; }}
+
+                /* Hide native ComfyUI workflow buttons if they appear */
+                button[title*="Workflow"], .comfy-workflow-btn { display: none !important; }
                 </style>
                 
                 <script id="comfy-auth-init">

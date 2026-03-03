@@ -27,13 +27,19 @@ function closeAboutModal() {
 }
 
 function openAboutDrawer() {
-    document.getElementById('aboutDrawer').classList.add('open');
-    document.querySelector('.container').classList.add('login-container-shifted');
+    const drawer = document.getElementById('aboutDrawer');
+    if (drawer) drawer.classList.add('open');
+
+    const container = document.querySelector('.container');
+    if (container) container.classList.add('login-container-shifted');
 }
 
 function closeAboutDrawer() {
-    document.getElementById('aboutDrawer').classList.remove('open');
-    document.querySelector('.container').classList.remove('login-container-shifted');
+    const drawer = document.getElementById('aboutDrawer');
+    if (drawer) drawer.classList.remove('open');
+
+    const container = document.querySelector('.container');
+    if (container) container.classList.remove('login-container-shifted');
 }
 
 function openForcedLogoutModal() {

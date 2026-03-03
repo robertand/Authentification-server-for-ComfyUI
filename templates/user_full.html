@@ -28,7 +28,7 @@ body{font-family:'Segoe UI', Arial;text-align:center;margin-top:100px;background
     <button class="about-btn-login" onclick="openAboutModal()">?</button>
     <div class="container">
         <div class="warning">User Limit Reached</div>
-        <p>User <strong>{username}</strong> has reached the maximum limit of {max_instances} simultaneous instances.</p>
+        <p>User <strong>{{ username }}</strong> has reached the maximum limit of {{ max_instances }} simultaneous instances.</p>
         <p>Please try another user or wait for someone to log out.</p>
         <a href="/login" class="btn">Try Another User</a>
     </div>
