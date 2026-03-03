@@ -1,42 +1,5 @@
 ComfyUI Auth Server
 
-Un server de autentificare multi-utilizator pentru ComfyUI, cu proxy complet, interfață admin și sistem de chat cu suport pentru fișiere.
-🌟 Caracteristici
-🔐 Autentificare și Securitate
-
-    Multi-utilizator - Gestionare simultană a mai multor utilizatori
-
-    Rate Limiting - Protecție împotriva atacurilor brute-force
-
-    Hashing bcrypt - Parole stocate în siguranță
-
-    Session Management - Timeout configurabil per utilizator
-
-    IP Monitoring - Blocare temporară pentru încercări eșuate
-
-🖥️ Proxy Complet
-
-    Rescriere URL - Toate URL-urile sunt rescrise automat pentru a trece prin proxy
-
-    WebSocket Proxy - Suport complet pentru WebSocket-urile ComfyUI
-
-    Streaming - Suport pentru fișiere mari (până la 1GB)
-
-    Nginx Auth - Suport pentru autentificare Basic Nginx (globală sau per utilizator)
-
-💬 Sistem de Chat
-
-    Comunicare în timp real - Chat între utilizatori și administratori
-
-    Suport fișiere - Trimitere și primire de fișiere (imagini, documente, etc.)
-
-    Notificări - Notificări pentru mesaje noi
-
-    Typing indicators - Indicator când cineva sc
-
-in engleza
-ComfyUI Auth Server
-
 A multi-user authentication server for ComfyUI with full proxy support, admin interface, and a file-sharing chat system.
 🌟 Features
 🔐 Authentication & Security
