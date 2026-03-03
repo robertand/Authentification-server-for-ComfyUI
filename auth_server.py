@@ -1490,16 +1490,21 @@ class AdminLoginHandler(BaseHandler):
 
 class AdminLogoutHandler(BaseHandler):
     def get(self):
+        self.perform_logout()
+        self.redirect("/admin/login")
+
+    def post(self):
+        self.perform_logout()
+        self.write({"success": True})
+
+    def perform_logout(self):
         session_id = self.get_secure_cookie("admin_session_id")
-        
         if session_id:
             session_id = session_id.decode()
             if session_id in admin_sessions:
                 del admin_sessions[session_id]
                 log.info("Admin logged out")
-        
         self.clear_cookie("admin_session_id")
-        self.redirect("/admin/login")
 
 # === HANDLERE PENTRU ADMIN INTERFACE ===
 class AdminHandler(BaseHandler):
