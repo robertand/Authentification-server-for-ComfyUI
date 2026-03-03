@@ -1,5 +1,6 @@
 <!DOCTYPE html><html><head><title>Loading...</title>
 <meta http-equiv="refresh" content="3">
+<link rel="stylesheet" type="text/css" href="/static/css/styles.css">
 <style>
     body{font-family:'Segoe UI', Arial;text-align:center;margin-top:100px;background:#1a1a1a;color:#e0e0e0;}
     .about-btn-login {
@@ -25,5 +26,6 @@
     <button class="about-btn-login" onclick="openAboutModal()">?</button>
     <h2>ComfyUI is loading...</h2>
     <p>Please wait 1-2 minutes. The page will refresh automatically.</p>
-    {about_modal}
+    {% raw about_modal %}
+    <script src="/static/js/main.js"></script>
 </body></html>

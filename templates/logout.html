@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html><head><title>Logged Out</title><meta charset="utf-8">
+<link rel="stylesheet" type="text/css" href="/static/css/styles.css">
 <style>
     body {
         font-family: 'Segoe UI', Arial, sans-serif; 
@@ -60,5 +61,6 @@
         <p>Thank you for using ComfyUI.</p>
         <a href="/login" class="btn">Login Again</a>
     </div>
-    {about_modal}
+    {% raw about_modal %}
+    <script src="/static/js/main.js"></script>
 </body></html>
