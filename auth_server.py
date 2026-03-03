@@ -124,9 +124,9 @@ USER_SETTINGS_MODAL_HTML = """
 SESSION_MODALS_HTML = """
 <div id="forcedLogoutModal" class="forced-logout-modal">
     <div class="forced-logout-modal-content">
-        <h2>Session Terminated</h2>
-        <p>Your session has been terminated by an administrator.</p>
-        <div class="forced-logout-info">Temporary restriction active</div>
+        <h2>Sesiune Închisă</h2>
+        <p>Sesiunea dumneavoastră a fost terminată de către administrator.</p>
+        <div class="forced-logout-info">Administratorul a închis această sesiune de lucru.</div>
         <button class="forced-logout-btn" onclick="redirectToLogin()">OK</button>
     </div>
 </div>
@@ -702,7 +702,7 @@ class LoginHandler(BaseHandler):
             """)
             return
         
-        self.render("login.html", error="", about_modal=ABOUT_DRAWER_HTML)
+        self.render("login.html", error="", about_modal=ABOUT_DRAWER_HTML, session_modals=SESSION_MODALS_HTML)
 
     def post(self):
         client_ip = self.get_client_ip()
@@ -1159,7 +1159,7 @@ class UploadChatFileHandler(BaseHandler):
 
 class DownloadFileHandler(BaseHandler):
     def get(self, file_id):
-        if not is_authenticated(self):
+        if not is_authenticated(self) and not is_admin_authenticated(self):
             self.set_status(401)
             self.write({"error": "Not authenticated"})
             return
@@ -1288,7 +1288,7 @@ class ChatWebSocketHandler(tornado.websocket.WebSocketHandler):
                         CHAT_MESSAGES[to_user].append(message_data)
 
                     # Notify Admin if relevant
-                    if to_user == "admin" or True: # Admin sees everything? Simplest is to notify admin of all user messages
+                    if to_user == "admin":
                         for ws in ADMIN_CHAT_WEBSOCKETS:
                             try:
                                 ws.write_message(json.dumps({
@@ -3086,6 +3086,7 @@ def make_admin_app():
         (r"/admin/api/chat/send", AdminChatSendHandler),
         (r"/admin/api/chat/upload-file", AdminChatUploadFileHandler),
         (r"/admin/api/chat/mark-read/(.*)", AdminChatMarkReadHandler),
+        (r"/download-file/(.*)", DownloadFileHandler),
         (r"/admin/chat-ws", AdminChatWebSocketHandler),
         (r"/admin/?", AdminHandler),  # Ruta pentru /admin/
         (r"/admin", AdminHandler),    # Ruta pentru /admin fără slash

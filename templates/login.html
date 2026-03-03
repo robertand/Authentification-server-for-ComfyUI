@@ -38,6 +38,9 @@
     </div>
     
     {% raw about_modal %}
+    {% if globals().get('session_modals') %}
+        {% raw session_modals %}
+    {% end %}
     
     <script src="/static/js/main.js"></script>
     <script>

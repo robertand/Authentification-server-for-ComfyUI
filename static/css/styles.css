@@ -60,10 +60,10 @@
     width: 500px; 
     text-align: center; 
     box-shadow: 0 0 20px rgba(0,0,0,0.5); 
-    border: 2px solid #dc3545;
+    border: 2px solid #ffc107;
 }
 .forced-logout-modal h2 { 
-    color: #dc3545; 
+    color: #ffc107;
     margin-bottom: 20px; 
 }
 .forced-logout-modal p { 
@@ -72,24 +72,26 @@
     color: #fff; 
 }
 .forced-logout-btn { 
-    background: #dc3545; 
-    color: white; 
+    background: #ffc107;
+    color: #000;
     border: none; 
     padding: 12px 30px; 
     border-radius: 5px; 
     cursor: pointer; 
     font-size: 16px; 
     margin: 5px;
+    font-weight: bold;
 }
 .forced-logout-btn:hover { 
-    background: #c82333; 
+    background: #e0a800;
 }
 .forced-logout-info {
-    background: #dc3545;
-    color: white;
+    background: #ffc107;
+    color: #000;
     padding: 10px;
     border-radius: 5px;
     margin: 10px 0;
+    font-weight: bold;
 }
 
 /* Session Expiry Modal */
