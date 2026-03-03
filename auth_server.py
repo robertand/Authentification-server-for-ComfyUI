@@ -27,6 +27,123 @@ from urllib.parse import quote, unquote, urlparse, urlunparse
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 
+# === MODAL COMPONENTS ===
+ABOUT_DRAWER_HTML = """
+<div id="aboutDrawer" class="about-drawer">
+    <button class="about-drawer-close" onclick="closeAboutDrawer()">&times;</button>
+    <div class="about-drawer-content">
+        <h2>PRO AI Server v0.4.5</h2>
+        <p><strong>Advanced management and authentication system for ComfyUI</strong></p>
+
+        <div class="about-glass-card">
+            <h3>Key Features:</h3>
+            <ul>
+                <li><strong>Multi-User Architecture</strong> - Separate instances for every user</li>
+                <li><strong>Dark Glass Interface</strong> - Modern drawer-based navigation</li>
+                <li><strong>Integrated Chat</strong> - Peer-to-peer and Admin communication</li>
+                <li><strong>Enhanced Security</strong> - Hashed passwords & Rate limiting</li>
+                <li><strong>Full Proxy</strong> - Secure access to remote instances</li>
+            </ul>
+        </div>
+
+        <div class="about-glass-card">
+            <h3>System Status:</h3>
+            <p>All systems operational. High-performance GPU nodes active.</p>
+        </div>
+
+        <div style="margin-top: 30px; text-align: center; opacity: 0.7; font-size: 12px;">
+            <p>Version 0.4.5 - Built for PRO AI Creative Teams</p>
+        </div>
+        <button class="about-close-btn" style="width: 100%; margin-top: 20px;" onclick="closeAboutDrawer()">Dismiss</button>
+    </div>
+</div>
+"""
+
+CHAT_UI_HTML = """
+<button class="chat-btn" onclick="toggleChatModal()" id="chatButton">
+    <span id="chatNotification" class="chat-notification"></span>
+    CHAT
+</button>
+<div id="chatModal" class="chat-modal">
+    <div class="chat-header">
+        <h3>Communication Center</h3>
+        <div style="display: flex; gap: 10px; align-items: center;">
+            <select id="chatRecipient" class="chat-recipient-select" onchange="switchChatRecipient()">
+                <option value="admin">Administrator</option>
+            </select>
+            <button class="chat-close-btn" onclick="closeChatModal()">&times;</button>
+        </div>
+    </div>
+    <div class="chat-messages" id="chatMessages"></div>
+    <div id="typingIndicator" class="chat-typing-indicator"></div>
+    <div id="filePreview" class="file-preview"></div>
+    <div class="chat-input-container">
+        <div class="chat-input-row">
+            <input type="text" id="chatInput" class="chat-input" placeholder="Type a message..." onkeypress="if(event.key==='Enter') sendChatMessage()">
+            <button class="chat-send-btn" onclick="sendChatMessage()">Send</button>
+        </div>
+        <div style="margin-top: 8px;">
+            <input type="file" id="chatFileInput" class="chat-file-input" multiple onchange="handleFileSelection()">
+            <button class="chat-file-btn" onclick="document.getElementById('chatFileInput').click()">📎 Attach Files</button>
+        </div>
+    </div>
+</div>
+"""
+
+USER_SETTINGS_MODAL_HTML = """
+<div id="userSettingsModal" class="user-settings-modal">
+    <div class="user-settings-modal-content">
+        <h2>User Settings</h2>
+        <form id="userSettingsForm">
+            <div class="form-group">
+                <label for="settingsUsername">Username:</label>
+                <input type="text" id="settingsUsername" required>
+            </div>
+            <div class="form-group">
+                <label for="settingsCurrentPassword">Current Password:</label>
+                <input type="password" id="settingsCurrentPassword" required>
+            </div>
+            <div class="form-group">
+                <label for="settingsNewPassword">New Password (optional):</label>
+                <input type="password" id="settingsNewPassword">
+            </div>
+            <div class="form-group">
+                <label for="settingsConfirmPassword">Confirm New Password:</label>
+                <input type="password" id="settingsConfirmPassword">
+            </div>
+            <div id="userSettingsMessage" class="user-settings-message"></div>
+            <div class="user-settings-modal-buttons">
+                <button type="button" class="user-settings-btn cancel" onclick="closeUserSettingsModal()">Cancel</button>
+                <button type="button" class="user-settings-btn" onclick="saveUserSettings()">Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+"""
+
+SESSION_MODALS_HTML = """
+<div id="forcedLogoutModal" class="forced-logout-modal">
+    <div class="forced-logout-modal-content">
+        <h2>Session Terminated</h2>
+        <p>Your session has been terminated by an administrator.</p>
+        <div class="forced-logout-info">Temporary restriction active</div>
+        <button class="forced-logout-btn" onclick="redirectToLogin()">OK</button>
+    </div>
+</div>
+
+<div id="sessionExpiryModal" class="session-expiry-modal">
+    <div class="session-expiry-modal-content">
+        <h2>Session Expiring</h2>
+        <p>Your session will expire in <span id="expiryCountdown">60</span> seconds due to inactivity.</p>
+        <div class="session-expiry-info">Would you like to extend your session?</div>
+        <div style="display: flex; gap: 10px; justify-content: center;">
+            <button class="session-logout-btn" onclick="logoutNow()">Logout</button>
+            <button class="session-expiry-btn" onclick="continueSession()">Extend Session</button>
+        </div>
+    </div>
+</div>
+"""
+
 # === CONFIGURARE ===
 CHUNK_SIZE = 64 * 1024  # 64KB chunks pentru streaming
 MAX_BUFFER_SIZE = 1024 * 1024 * 1024  # 1GB pentru fișiere mari
@@ -309,7 +426,7 @@ def load_config():
 
 def save_config():
     try:
-        config = {
+        config_data = {
             "users": USERS,
             "admin": ADMIN_CONFIG,
             "workflow_root": WORKFLOW_ROOT_DIR,
@@ -317,7 +434,7 @@ def save_config():
             "cookie_secret": config.get("cookie_secret")
         }
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
+            json.dump(config_data, f, indent=2, ensure_ascii=False)
         log.info("✓ Configurație salvată în fișier")
     except Exception as e:
         log.error(f"Eroare la salvarea configurației: {e}")
@@ -585,7 +702,7 @@ class LoginHandler(BaseHandler):
             """)
             return
         
-        self.render("login.html", error="")
+        self.render("login.html", error="", about_modal=ABOUT_DRAWER_HTML)
 
     def post(self):
         client_ip = self.get_client_ip()
@@ -610,7 +727,8 @@ class LoginHandler(BaseHandler):
             if not USERS[user].get("enabled", True):
                 log.warning(f"Disabled user {user} tried to login from IP {client_ip}")
                 self.render("login.html",
-                    error='This user account is disabled!'
+                    error='This user account is disabled!',
+                    about_modal=ABOUT_DRAWER_HTML
                 )
                 return
                 
@@ -628,19 +746,21 @@ class LoginHandler(BaseHandler):
                     if remaining_time > 0:
                         minutes = int(remaining_time // 60)
                         seconds = int(remaining_time % 60)
-                        self.render("forced_logout.html")
+                        self.render("forced_logout.html", about_modal=ABOUT_DRAWER_HTML)
                         return
                 
                 log.warning(f"User {user} tried to login but limit reached from IP {client_ip}")
                 self.render("user_full.html",
                     username=user, 
-                    max_instances=USERS[user]["max_instances"]
+                    max_instances=USERS[user]["max_instances"],
+                    about_modal=ABOUT_DRAWER_HTML
                 )
         else:
             RateLimiter.record_failed_attempt(client_ip)
             log.warning(f"Failed login attempt for user {user} from IP {client_ip}")
             self.render("login.html",
-                error='Invalid credentials!'
+                error='Invalid credentials!',
+                about_modal=ABOUT_DRAWER_HTML
             )
 
 class UserStatusHandler(BaseHandler):
@@ -727,7 +847,7 @@ class LogoutHandler(BaseHandler):
                 log.info(f"User {username} logged out")
         
         self.clear_cookie("session_id")
-        self.render("logout.html", about_modal="")
+        self.render("logout.html", about_modal=ABOUT_DRAWER_HTML)
 
 # === WORKFLOW HANDLERS ===
 class WorkflowListHandler(BaseHandler):
@@ -900,6 +1020,7 @@ class SendMessageHandler(BaseHandler):
         
         data = json.loads(self.request.body)
         message = data.get("message", "").strip()
+        to_user = data.get("to_user", "admin")
         message_type = data.get("message_type", "text")
         file_data = data.get("file_data")
         
@@ -907,45 +1028,48 @@ class SendMessageHandler(BaseHandler):
             self.write({"success": False, "error": "Message cannot be empty"})
             return
         
-        if username not in CHAT_MESSAGES:
-            CHAT_MESSAGES[username] = []
-        
         message_data = {
-            "from": "user",
+            "from": username,
+            "to": to_user,
             "message": message,
             "timestamp": time.time(),
-            "read": True,
+            "read": False,
             "message_type": message_type,
             "file_data": file_data
         }
+
+        if username not in CHAT_MESSAGES: CHAT_MESSAGES[username] = []
         CHAT_MESSAGES[username].append(message_data)
         
+        if to_user != "admin" and to_user != username:
+            if to_user not in CHAT_MESSAGES: CHAT_MESSAGES[to_user] = []
+            CHAT_MESSAGES[to_user].append(message_data)
+
         for ws in ADMIN_CHAT_WEBSOCKETS:
             try:
                 ws.write_message(json.dumps({
                     "type": "new_message",
                     "from_user": username,
+                    "to_user": to_user,
                     "message": message,
                     "timestamp": time.time(),
                     "message_type": message_type,
                     "file_data": file_data
                 }))
-            except:
-                pass
+            except: pass
         
-        if username in USER_CHAT_WEBSOCKETS:
-            for ws in USER_CHAT_WEBSOCKETS[username]:
+        if to_user in USER_CHAT_WEBSOCKETS:
+            for ws in USER_CHAT_WEBSOCKETS[to_user]:
                 try:
                     ws.write_message(json.dumps({
                         "type": "new_message",
-                        "from": "user",
+                        "from_user": username,
                         "message": message,
                         "timestamp": time.time(),
                         "message_type": message_type,
                         "file_data": file_data
                     }))
-                except:
-                    pass
+                except: pass
         
         self.write({"success": True})
 
@@ -961,9 +1085,7 @@ class UploadChatFileHandler(BaseHandler):
         username = session_data["user"]
         
         message = self.get_argument("message", "").strip()
-        
-        if username not in CHAT_MESSAGES:
-            CHAT_MESSAGES[username] = []
+        to_user = self.get_argument("to_user", "admin")
         
         file_data_list = []
         
@@ -990,41 +1112,47 @@ class UploadChatFileHandler(BaseHandler):
                 message = f"Sent {len(file_data_list)} files"
         
         message_data = {
-            "from": "user",
+            "from": username,
+            "to": to_user,
             "message": message,
             "timestamp": time.time(),
-            "read": True,
+            "read": False,
             "message_type": "file" if file_data_list else "text",
             "file_data": file_data_list[0] if len(file_data_list) == 1 else None
         }
+
+        if username not in CHAT_MESSAGES: CHAT_MESSAGES[username] = []
         CHAT_MESSAGES[username].append(message_data)
         
+        if to_user != "admin" and to_user != username:
+            if to_user not in CHAT_MESSAGES: CHAT_MESSAGES[to_user] = []
+            CHAT_MESSAGES[to_user].append(message_data)
+
         for ws in ADMIN_CHAT_WEBSOCKETS:
             try:
                 ws.write_message(json.dumps({
                     "type": "new_message",
                     "from_user": username,
+                    "to_user": to_user,
                     "message": message,
                     "timestamp": time.time(),
                     "message_type": "file" if file_data_list else "text",
                     "file_data": file_data_list[0] if len(file_data_list) == 1 else None
                 }))
-            except:
-                pass
+            except: pass
         
-        if username in USER_CHAT_WEBSOCKETS:
-            for ws in USER_CHAT_WEBSOCKETS[username]:
+        if to_user in USER_CHAT_WEBSOCKETS:
+            for ws in USER_CHAT_WEBSOCKETS[to_user]:
                 try:
                     ws.write_message(json.dumps({
                         "type": "new_message",
-                        "from": "user",
+                        "from_user": username,
                         "message": message,
                         "timestamp": time.time(),
                         "message_type": "file" if file_data_list else "text",
                         "file_data": file_data_list[0] if len(file_data_list) == 1 else None
                     }))
-                except:
-                    pass
+                except: pass
         
         self.write({"success": True})
 
@@ -1079,9 +1207,25 @@ class UnreadMessagesCountHandler(BaseHandler):
         
         unread_count = 0
         if username in CHAT_MESSAGES:
-            unread_count = sum(1 for msg in CHAT_MESSAGES[username] if msg["from"] == "admin" and not msg["read"])
+            unread_count = sum(1 for msg in CHAT_MESSAGES[username] if msg["from"] != username and not msg["read"])
         
         self.write({"success": True, "unread_count": unread_count})
+
+class ChatUsersListHandler(BaseHandler):
+    def get(self):
+        if not is_authenticated(self):
+            self.set_status(401)
+            return
+
+        user_list = []
+        for username in USERS:
+            # Puteam adăuga status (online/offline) bazat pe USER_CHAT_WEBSOCKETS
+            user_list.append({
+                "username": username,
+                "online": username in USER_CHAT_WEBSOCKETS
+            })
+
+        self.write({"success": True, "users": user_list})
 
 class ChatWebSocketHandler(tornado.websocket.WebSocketHandler):
     def __init__(self, *args, **kwargs):
@@ -1107,7 +1251,7 @@ class ChatWebSocketHandler(tornado.websocket.WebSocketHandler):
             USER_CHAT_WEBSOCKETS[self.username] = []
         USER_CHAT_WEBSOCKETS[self.username].append(self)
         
-        unread_count = sum(1 for msg in CHAT_MESSAGES[self.username] if msg["from"] == "admin" and not msg["read"])
+        unread_count = sum(1 for msg in CHAT_MESSAGES[self.username] if msg["from"] != self.username and not msg["read"])
         self.write_message(json.dumps({
             "type": "unread_count",
             "count": unread_count
@@ -1119,32 +1263,57 @@ class ChatWebSocketHandler(tornado.websocket.WebSocketHandler):
             
             if data.get("type") == "send_message":
                 message_text = data.get("message", "").strip()
+                to_user = data.get("to_user", "admin")
                 message_type = data.get("message_type", "text")
                 file_data = data.get("file_data")
                 
                 if message_text and self.username:
                     message_data = {
-                        "from": "user",
+                        "from": self.username,
+                        "to": to_user,
                         "message": message_text,
                         "timestamp": time.time(),
-                        "read": True,
+                        "read": False,
                         "message_type": message_type,
                         "file_data": file_data
                     }
+
+                    # Store message for both users
+                    if self.username not in CHAT_MESSAGES: CHAT_MESSAGES[self.username] = []
                     CHAT_MESSAGES[self.username].append(message_data)
                     
-                    for ws in ADMIN_CHAT_WEBSOCKETS:
-                        try:
-                            ws.write_message(json.dumps({
-                                "type": "new_message",
-                                "from_user": self.username,
-                                "message": message_text,
-                                "timestamp": time.time(),
-                                "message_type": message_type,
-                                "file_data": file_data
-                            }))
-                        except:
-                            pass
+                    if to_user != "admin" and to_user != self.username:
+                        if to_user not in CHAT_MESSAGES: CHAT_MESSAGES[to_user] = []
+                        CHAT_MESSAGES[to_user].append(message_data)
+
+                    # Notify Admin if relevant
+                    if to_user == "admin" or True: # Admin sees everything? Simplest is to notify admin of all user messages
+                        for ws in ADMIN_CHAT_WEBSOCKETS:
+                            try:
+                                ws.write_message(json.dumps({
+                                    "type": "new_message",
+                                    "from_user": self.username,
+                                    "to_user": to_user,
+                                    "message": message_text,
+                                    "timestamp": time.time(),
+                                    "message_type": message_type,
+                                    "file_data": file_data
+                                }))
+                            except: pass
+
+                    # Notify Recipient User
+                    if to_user in USER_CHAT_WEBSOCKETS:
+                        for ws in USER_CHAT_WEBSOCKETS[to_user]:
+                            try:
+                                ws.write_message(json.dumps({
+                                    "type": "new_message",
+                                    "from_user": self.username,
+                                    "message": message_text,
+                                    "timestamp": time.time(),
+                                    "message_type": message_type,
+                                    "file_data": file_data
+                                }))
+                            except: pass
                     
                     self.write_message(json.dumps({
                         "type": "message_sent",
@@ -1167,10 +1336,10 @@ class ChatWebSocketHandler(tornado.websocket.WebSocketHandler):
             elif data.get("type") == "mark_read":
                 if self.username in CHAT_MESSAGES:
                     for msg in CHAT_MESSAGES[self.username]:
-                        if msg["from"] == "admin":
+                        if msg["from"] != self.username:
                             msg["read"] = True
                 
-                unread_count = sum(1 for msg in CHAT_MESSAGES[self.username] if msg["from"] == "admin" and not msg["read"])
+                unread_count = sum(1 for msg in CHAT_MESSAGES[self.username] if msg["from"] != self.username and not msg["read"])
                 self.write_message(json.dumps({
                     "type": "unread_count",
                     "count": unread_count
@@ -1222,7 +1391,7 @@ class SessionCheckHandler(BaseHandler):
                         USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
                     del sessions[session_id.decode()]
                     self.clear_cookie("session_id")
-                    self.render("session_expired.html", about_modal="")
+                    self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
                     return
             
             self.write({
@@ -2199,7 +2368,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                             USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
                         del sessions[session_id.decode()]
                         self.clear_cookie("session_id")
-                        self.render("session_expired.html", about_modal="")
+                        self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
                         return
         
         # Verifică autentificarea
@@ -2220,7 +2389,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             
         # Verifică dacă instanța e gata
         if not comfy_instances_ready.get(comfy_url, False) and not (path and path.startswith(('login', 'logout', 'health', 'waiting'))):
-            self.render("waiting.html", about_modal="")
+            self.render("waiting.html", about_modal=ABOUT_DRAWER_HTML)
             return
 
         # Obține path-ul brut din URI pentru a păstra encodarea (important pentru workflow-uri în subfoldere)
@@ -2525,6 +2694,11 @@ class MultiInstanceProxyHandler(BaseHandler):
                         <a href="/logout" class="comfy-logout-btn">Logout</a>
                     `;
                     
+                    document.body.insertAdjacentHTML('beforeend', `{ABOUT_DRAWER_HTML.replace('`', '\\`').replace('\n', ' ')}`);
+                    document.body.insertAdjacentHTML('beforeend', `{CHAT_UI_HTML.replace('`', '\\`').replace('\n', ' ')}`);
+                    document.body.insertAdjacentHTML('beforeend', `{USER_SETTINGS_MODAL_HTML.replace('`', '\\`').replace('\n', ' ')}`);
+                    document.body.insertAdjacentHTML('beforeend', `{SESSION_MODALS_HTML.replace('`', '\\`').replace('\n', ' ')}`);
+
                     document.body.appendChild(overlay);
                     document.body.appendChild(userInfo);
                     document.body.appendChild(serverTitle);
@@ -2819,6 +2993,7 @@ def make_auth_app():
         
         # Chat routes
         (r"/chat-messages", ChatMessagesHandler),
+        (r"/chat-users", ChatUsersListHandler),
         (r"/send-message", SendMessageHandler),
         (r"/upload-chat-file", UploadChatFileHandler),
         (r"/download-file/(.*)", DownloadFileHandler),

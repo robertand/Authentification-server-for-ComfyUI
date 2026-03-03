@@ -11,11 +11,19 @@ let isTyping = false;
 let attachedFiles = [];
 
 function openAboutModal() {
-    document.getElementById('aboutModal').style.display = 'block';
+    if (document.getElementById('aboutDrawer')) {
+        openAboutDrawer();
+    } else if (document.getElementById('aboutModal')) {
+        document.getElementById('aboutModal').style.display = 'block';
+    }
 }
 
 function closeAboutModal() {
-    document.getElementById('aboutModal').style.display = 'none';
+    if (document.getElementById('aboutDrawer')) {
+        closeAboutDrawer();
+    } else if (document.getElementById('aboutModal')) {
+        document.getElementById('aboutModal').style.display = 'none';
+    }
 }
 
 function openAboutDrawer() {
@@ -225,8 +233,40 @@ function openChatModal() {
     // Start auto-refresh for chat messages
     startChatAutoRefresh();
     
+    // Load users for chat selection
+    loadChatUsersList();
+
     // Mark messages as read when opening chat
     markMessagesAsRead();
+}
+
+function loadChatUsersList() {
+    fetch('/chat-users')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const select = document.getElementById('chatRecipient');
+                const currentRecipient = select.value;
+
+                // Keep Admin, clear others
+                select.innerHTML = '<option value="admin">Administrator</option>';
+
+                data.users.forEach(user => {
+                    const option = document.createElement('option');
+                    option.value = user.username;
+                    option.textContent = user.username + (user.online ? ' (Online)' : '');
+                    select.appendChild(option);
+                });
+
+                select.value = currentRecipient;
+            }
+        })
+        .catch(err => console.log('Error loading chat users:', err));
+}
+
+function switchChatRecipient() {
+    // Reload messages for the selected conversation or just filter them
+    loadChatMessages();
 }
 
 function closeChatModal() {
@@ -288,6 +328,10 @@ function connectChatWebSocket() {
 }
 
 function loadChatMessages() {
+    const recipient = document.getElementById('chatRecipient').value;
+    const usernameElement = document.querySelector('.comfy-user-info');
+    const myUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : '';
+
     fetch('/chat-messages', {
         method: 'GET',
         credentials: 'include'
@@ -297,8 +341,20 @@ function loadChatMessages() {
         if (data.success) {
             const chatMessages = document.getElementById('chatMessages');
             chatMessages.innerHTML = '';
+
             data.messages.forEach(msg => {
-                addMessageToChat(msg.message, msg.from, msg.timestamp, msg.message_type, msg.file_data, false);
+                // Filter messages: only show if I'm sender/receiver and the other person is the selected recipient
+                // Exception: if recipient is 'admin', show all messages with 'admin'
+                let show = false;
+                if (recipient === 'admin') {
+                    if (msg.from === 'admin' || msg.to === 'admin') show = true;
+                } else {
+                    if ((msg.from === myUsername && msg.to === recipient) || (msg.from === recipient && msg.to === myUsername)) show = true;
+                }
+
+                if (show) {
+                    addMessageToChat(msg.message, msg.from, msg.timestamp, msg.message_type, msg.file_data, false);
+                }
             });
             scrollChatToBottom();
             
@@ -313,8 +369,11 @@ function loadChatMessages() {
 
 function addMessageToChat(message, from, timestamp, message_type = 'text', file_data = null, shouldScroll = true) {
     const chatMessages = document.getElementById('chatMessages');
+    const usernameElement = document.querySelector('.comfy-user-info');
+    const myUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : '';
+
     const messageDiv = document.createElement('div');
-    messageDiv.className = `chat-message ${from === 'admin' ? 'admin' : 'user'}`;
+    messageDiv.className = `chat-message ${from === myUsername ? 'user' : 'admin'}`;
     
     const time = new Date(timestamp * 1000).toLocaleTimeString();
     
@@ -332,7 +391,7 @@ function addMessageToChat(message, from, timestamp, message_type = 'text', file_
     
     messageDiv.innerHTML = `
         <div>${messageContent}</div>
-        <div class="chat-message-time">${from === 'admin' ? 'Admin' : 'You'} • ${time}</div>
+        <div class="chat-message-time">${from === myUsername ? 'You' : from} • ${time}</div>
     `;
     
     // Add copy to clipboard functionality
@@ -396,14 +455,19 @@ function sendChatMessage() {
 }
 
 function sendTextMessage(message) {
+    const recipient = document.getElementById('chatRecipient').value;
+    const usernameElement = document.querySelector('.comfy-user-info');
+    const myUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : 'user';
+
     if (chatWebSocket && chatWebSocket.readyState === WebSocket.OPEN) {
         chatWebSocket.send(JSON.stringify({
             type: 'send_message',
+            to_user: recipient,
             message: message,
             message_type: 'text'
         }));
         // Add message immediately to chat for better UX
-        addMessageToChat(message, 'user', Date.now() / 1000);
+        addMessageToChat(message, myUsername, Date.now() / 1000);
         document.getElementById('chatInput').value = '';
         scrollChatToBottom();
         stopTyping();
@@ -415,6 +479,7 @@ function sendTextMessage(message) {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
+                to_user: recipient,
                 message: message,
                 message_type: 'text'
             }),
@@ -436,8 +501,10 @@ function sendTextMessage(message) {
 }
 
 function uploadFiles(message) {
+    const recipient = document.getElementById('chatRecipient').value;
     const formData = new FormData();
     formData.append('message', message);
+    formData.append('to_user', recipient);
     
     attachedFiles.forEach((file, index) => {
         formData.append(`file${index}`, file);
@@ -619,147 +686,6 @@ function stopChatAutoRefresh() {
     }
 }
 
-// Workflow Browser Functions - Improved with file handling
-function openWorkflowBrowser() {
-    document.getElementById('workflowBrowserModal').style.display = 'block';
-    loadWorkflowList();
-}
-
-function closeWorkflowBrowser() {
-    document.getElementById('workflowBrowserModal').style.display = 'none';
-    selectedWorkflow = null;
-}
-
-function loadWorkflowList() {
-    const workflowList = document.getElementById('workflowList');
-    const workflowInfo = document.getElementById('workflowInfo');
-    
-    workflowList.innerHTML = '<div class="workflow-empty">Loading workflows...</div>';
-    
-    fetch('/api/workflows/list')
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                workflowList.innerHTML = '';
-                document.getElementById('currentUserFolder').textContent = data.user_directory;
-                
-                if (data.workflows.length === 0) {
-                    workflowList.innerHTML = '<div class="workflow-empty">No workflow files found. Save your first workflow using the SAVW button!</div>';
-                    workflowInfo.textContent = 'No workflow files found';
-                } else {
-                    data.workflows.forEach(workflow => {
-                        const item = document.createElement('div');
-                        item.className = 'workflow-item';
-                        item.innerHTML = `
-                            <div class="workflow-item-info">
-                                <div class="workflow-item-name">${workflow.name}</div>
-                                <div class="workflow-item-details">
-                                    <span>Modified: ${new Date(workflow.modified * 1000).toLocaleString()}</span>
-                                    <span>Size: ${(workflow.size / 1024).toFixed(2)} KB</span>
-                                </div>
-                            </div>
-                            <div class="workflow-actions">
-                                <button class="workflow-delete-btn" onclick="deleteWorkflow('${workflow.name}', this)">Delete</button>
-                            </div>
-                        `;
-                        item.onclick = (e) => {
-                            // Don't select when clicking delete button
-                            if (!e.target.classList.contains('workflow-delete-btn')) {
-                                selectWorkflow(workflow, item);
-                            }
-                        };
-                        workflowList.appendChild(item);
-                    });
-                    
-                    workflowInfo.textContent = `Found ${data.workflows.length} workflow file(s)`;
-                }
-            } else {
-                workflowList.innerHTML = '<div class="workflow-empty">Error loading workflows: ' + data.error + '</div>';
-                workflowInfo.textContent = 'Error loading workflows';
-            }
-        })
-        .catch(error => {
-            console.error('Error loading workflows:', error);
-            workflowList.innerHTML = '<div class="workflow-empty">Error loading workflows. Please check console.</div>';
-            workflowInfo.textContent = 'Error loading workflows';
-        });
-}
-
-function selectWorkflow(workflow, element) {
-    // Remove previous selection
-    document.querySelectorAll('.workflow-item').forEach(item => {
-        item.classList.remove('selected');
-    });
-    
-    // Select new one
-    element.classList.add('selected');
-    selectedWorkflow = workflow;
-}
-
-function loadSelectedWorkflow() {
-    if (!selectedWorkflow) {
-        alert('Please select a workflow first');       
-        return;
-    }
-    
-    fetch(`/api/workflows/load/${encodeURIComponent(selectedWorkflow.name)}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                // Procesează workflow-ul pentru a rescrie path-urile de fișiere
-                const workflow = data.workflow;
-                
-                // Funcție recursivă pentru a găsi și înlocui path-uri de fișiere
-                function rewriteFilePaths(obj) {
-                    if (!obj || typeof obj !== 'object') return obj;
-                    
-                    if (Array.isArray(obj)) {
-                        return obj.map(item => rewriteFilePaths(item));
-                    }
-                    
-                    const newObj = {};
-                    for (const [key, value] of Object.entries(obj)) {
-                        if (typeof value === 'string') {
-                            // Verifică dacă e un path de fișier
-                            if (value.includes('/mnt/') || value.includes('/home/') || 
-                                value.match(/\.(png|jpg|jpeg|gif|svg|webp|mp4|json|txt)$/i)) {
-                                // Extrage numele fișierului
-                                const filename = value.split('/').pop();
-                                // Rescrie path-ul să pointeze către serverul nostru
-                                newObj[key] = `/workflow-files/${filename}`;
-                            } else {
-                                newObj[key] = value;
-                            }
-                        } else if (typeof value === 'object' && value !== null) {
-                            newObj[key] = rewriteFilePaths(value);
-                        } else {
-                            newObj[key] = value;
-                        }
-                    }
-                    return newObj;
-                }
-                
-                const processedWorkflow = rewriteFilePaths(workflow);
-                
-                // Injectează workflow-ul în ComfyUI
-                if (window.app && window.app.graph) {
-                    window.app.loadGraphData(processedWorkflow);
-                    closeWorkflowBrowser();
-                    
-                    // Afișează un mesaj de succes
-                    showNotification('✓ Workflow loaded successfully!', 'success');
-                } else {
-                    alert('Workflow loaded successfully! Please inject it manually.');
-                }
-            } else {
-                alert('Error loading workflow: ' + data.error);
-            }
-        })
-        .catch(error => {
-            console.error('Error loading workflow:', error);
-            alert('Error loading workflow: ' + error);
-        });
-}
 
 // Funcție pentru a afișa notificări
 function showNotification(message, type = 'info') {
@@ -799,74 +725,6 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-function deleteWorkflow(filename, button) {
-    if (!confirm(`Are you sure you want to delete "${filename}"? This action cannot be undone!`)) {
-        return;
-    }
-    
-    // Show loading state
-    button.textContent = 'Deleting...';
-    button.disabled = true;
-    
-    fetch(`/api/workflows/delete/${encodeURIComponent(filename)}`, {
-        method: 'DELETE'
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showNotification('✓ Workflow deleted successfully!', 'success');
-            loadWorkflowList(); // Refresh the list
-        } else {
-            alert('Error deleting workflow: ' + data.error);
-            button.textContent = 'Delete';
-            button.disabled = false;
-        }
-    })
-    .catch(error => {
-        console.error('Error deleting workflow:', error);
-        alert('Error deleting workflow: ' + error);
-        button.textContent = 'Delete';
-        button.disabled = false;
-    });
-}
-
-function saveCurrentWorkflow() {
-    const filename = prompt('Enter workflow filename (without .json extension):');
-    if (!filename) return;
-    
-    if (window.app && window.app.graph) {
-        const workflowData = window.app.graph.serialize();
-        
-        fetch('/api/workflows/save', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                filename: filename,
-                workflow: workflowData
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showNotification('✓ Workflow saved successfully!', 'success');
-                // Refresh the workflow list if browser is open
-                if (document.getElementById('workflowBrowserModal').style.display === 'block') {
-                    loadWorkflowList();
-                }
-            } else {
-                alert('Error saving workflow: ' + data.error);
-            }
-        })
-        .catch(error => {
-            console.error('Error saving workflow:', error);
-            alert('Error saving workflow: ' + error);
-        });
-    } else {
-        alert('No workflow to save or ComfyUI not loaded properly.');
-    }
-}
 
 // Funcție pentru a încărca imagini din workflow
 function loadWorkflowImage(filename) {
@@ -917,21 +775,15 @@ function checkChatButtonVisibility() {
     .then(response => response.json())
     .then(data => {
         const chatButton = document.getElementById('chatButton');
-        const workflowButton = document.querySelector('.workflow-btn');
-        const workflowSaveButton = document.querySelector('.workflow-save-btn');
         if (chatButton) {
             if (data.status === 'authenticated') {
                 chatButton.style.display = 'flex';
-                if (workflowButton) workflowButton.style.display = 'flex';
-                if (workflowSaveButton) workflowSaveButton.style.display = 'flex';
                 // Connect to chat WebSocket when authenticated
                 connectChatWebSocket();
                 // Check for unread messages
                 checkUnreadMessages();
             } else {
                 chatButton.style.display = 'none';
-                if (workflowButton) workflowButton.style.display = 'none';
-                if (workflowSaveButton) workflowSaveButton.style.display = 'none';
             }
         }
     })
@@ -1031,16 +883,8 @@ function checkSessionStatus() {
             updateSessionTimer(data.time_remaining);
             // Ensure chat button is visible
             const chatButton = document.getElementById('chatButton');
-            const workflowButton = document.querySelector('.workflow-btn');
-            const workflowSaveButton = document.querySelector('.workflow-save-btn');
             if (chatButton) {
                 chatButton.style.display = 'flex';
-            }
-            if (workflowButton) {
-                workflowButton.style.display = 'flex';
-            }
-            if (workflowSaveButton) {
-                workflowSaveButton.style.display = 'flex';
             }
         }
     })

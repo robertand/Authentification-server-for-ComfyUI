@@ -6,7 +6,12 @@
       "instances": 0,
       "max_instances": 2,
       "session_timeout": 60,
-      "enabled": true
+      "enabled": true,
+      "nginx_auth": {
+        "enabled": false,
+        "username": "",
+        "password": ""
+      }
     },
     "user3": {
       "password": "$2b$12$TF3rYIOZeEyjgtP0caDJvuSv2qe5G5gDYGhn6vt73RNLGnYyOyEj.",
@@ -14,7 +19,12 @@
       "instances": 0,
       "max_instances": 2,
       "session_timeout": 60,
-      "enabled": true
+      "enabled": true,
+      "nginx_auth": {
+        "enabled": false,
+        "username": "",
+        "password": ""
+      }
     },
     "user4": {
       "password": "$2b$12$Qnyk79WcRaIfz.73Cy7OFejAPYRfjRFGWiErtlWGiJmNSuWtx4T1.",
@@ -22,7 +32,12 @@
       "instances": 0,
       "max_instances": 2,
       "session_timeout": 60,
-      "enabled": true
+      "enabled": true,
+      "nginx_auth": {
+        "enabled": false,
+        "username": "",
+        "password": ""
+      }
     },
     "user_ro": {
       "password": "$2b$12$5V3DGUJPYaSQkVoerSrHTu1kMrc.GVKvFA1eEguTKPfXwQuF02DG.",
@@ -30,12 +45,23 @@
       "instances": 0,
       "max_instances": 2,
       "session_timeout": 60,
-      "enabled": true
+      "enabled": true,
+      "nginx_auth": {
+        "enabled": false,
+        "username": "",
+        "password": ""
+      }
     }
   },
   "admin": {
     "password": "$2b$12$jZMZ1A6kdk6X46xAa4nHjONAurdfNM5BV0DNI2ZUVR1ihXQCX4zwm",
     "enabled": true
   },
-  "workflow_root": "/mnt/prouser/spatiu/ComfyUI/workflows"
+  "workflow_root": "/mnt/prouser/spatiu/ComfyUI/workflows",
+  "global_nginx_auth": {
+    "enabled": false,
+    "username": "",
+    "password": ""
+  },
+  "cookie_secret": "2kW6r9TS2gb4Vb5FPbw8fY0zttirO6e9pdpObPVXIrU="
 }

@@ -37,64 +37,7 @@
         </div>
     </div>
     
-    <!-- About Modal -->
-    <div id="aboutModal" class="about-modal">
-        <div class="about-modal-content">
-            <h2>ComfyUI Auth Server v0.4.0</h2>
-            <p><strong>Advanced management and authentication system for multiple ComfyUI instances</strong></p>
-            
-            <h3>Key Features and Advantages:</h3>
-            <ul style="text-align: left; margin: 20px 0;">
-                <li><strong>Multi-User Architecture</strong> - Simultaneous management of multiple users with separate instances</li>
-                <li><strong>Intelligent Load Balancing</strong> - Automatic workload distribution between ComfyUI instances</li>
-                <li><strong>Enhanced Security</strong> - Rate limiting, bcrypt password hashing, customizable session timeouts</li>
-                <li><strong>Advanced Admin Interface</strong> - Real-time monitoring, session management, full control</li>
-                <li><strong>Integrated Chat System</strong> - Direct communication between users and administrators</li>
-                <li><strong>Personalized Workflow Browser</strong> - Each user has their own workspace for workflows</li>
-                <li><strong>Session Management</strong> - Customizable timeout, expiry notifications, session renewal</li>
-                <li><strong>Performance Monitoring</strong> - Real-time instance status, maximum capacity alerts</li>
-                <li><strong>Backup & Restore</strong> - Automatic configuration saving, easy recovery</li>
-                <li><strong>Scalability</strong> - Easy addition of new users and resources</li>
-                <li><strong>Nginx Reverse Proxy Support</strong> - Full support for nginx with Basic Authentication</li>
-            </ul>
-    
-            <h3>Security Features:</h3>
-            <ul style="text-align: left; margin: 15px 0;">
-                <li>Authentication with hashed passwords (bcrypt)</li>
-                <li>Protection against brute-force attacks</li>
-                <li>Configurable session timeout per user</li>
-                <li>Temporary user blocking for security</li>
-                <li>Suspicious IP monitoring</li>
-                <li>Nginx Basic Auth support (per user or global)</li>
-            </ul>
-    
-            <h3>For Administrators:</h3>
-            <ul style="text-align: left; margin: 15px 0;">
-                <li>Real-time statistics dashboard</li>
-                <li>Complete user management</li>
-                <li>Flexible instance configuration</li>
-                <li>Chat system with users</li>
-                <li>Active session control</li>
-                <li>Workflow directory configuration</li>
-                <li>Nginx authentication configuration per user</li>
-            </ul>
-    
-            <div style="background: #2a2a2a; border-left: 4px solid #007bff; padding: 15px; margin: 20px 0;">
-                <h4>Main Benefits:</h4>
-                <p><strong>Resource Optimization</strong> - Balanced distribution of computing load<br>
-                <strong>User Isolation</strong> - Each user works in a secure space<br>
-                <strong>Easy Management</strong> - Single interface for all instances<br>
-                <strong>Scalability</strong> - Always add new users and resources<br>
-                <strong>Nginx Integration</strong> - Works seamlessly with nginx reverse proxies</p>
-            </div>
-    
-            <p><strong>Version:</strong> 0.4.0 - Report issues through the chat system to administrators</p>
-            
-            <p><em>Version 0.4.0 - With nginx reverse proxy support<br>
-            Report any issues or improvement suggestions through the chat system!</em></p>
-            <button class="about-close-btn" onclick="closeAboutModal()">Understood</button>
-        </div>
-    </div>
+    {% raw about_modal %}
     
     <script src="/static/js/main.js"></script>
     <script>

@@ -1,0 +1,359 @@
+            self.write({"success": False, "error": "Current password is incorrect"})
+            return
+
+        if len(new_password) < 3:
+            self.write({"success": False, "error": "New password must be at least 3 characters"})
+            return
+
+        ADMIN_CONFIG["password"] = hash_password(new_password)
+        log.info("Admin password changed successfully")
+
+        save_config()
+
+        self.write({"success": True})
+
+# === BLOCKED USERS HANDLER ===
+class AdminBlockedUsersHandler(BaseHandler):
+    def get(self):
+        if not is_admin_authenticated(self):
+            self.set_status(401)
+            self.write({"error": "Not authenticated"})
+            return
+
+        self.set_header("Content-Type", "application/json")
+
+        cleanup_blocked_users()
+
+        blocked_users = {}
+        current_time = time.time()
+        for username, expiry_time in BLOCKED_USERS.items():
+            if expiry_time > current_time:
+                remaining = int(expiry_time - current_time)
+                minutes = remaining // 60
+                seconds = remaining % 60
+                blocked_users[username] = {
+                    "remaining_time": f"{minutes}:{seconds:02d}",
+                    "remaining_seconds": remaining
+                }
+
+        self.write({"blocked_users": blocked_users})
+
+    def delete(self, username):
+        if not is_admin_authenticated(self):
+            self.set_status(401)
+            return
+
+        if username in BLOCKED_USERS:
+            del BLOCKED_USERS[username]
+            log.info(f"Admin removed restriction for user: {username}")
+
+        self.set_status(204)
+
+# === PROXY HANDLER COMPLET CU RESCRIERE URL ===
+class MultiInstanceProxyHandler(BaseHandler):
+    def set_default_headers(self):
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with, content-type, authorization, x-forwarded-for, x-real-ip, x-forwarded-proto, x-forwarded-host, cookie")
+        self.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD")
+        self.set_header("Access-Control-Allow-Credentials", "true")
+
+    async def options(self, path=None):
+        self.set_status(204)
+        self.finish()
+
+    async def get(self, path=None):
+        await self._proxy_request("GET", path or "")
+
+    async def post(self, path=None):
+        await self._proxy_request("POST", path or "")
+
+    async def put(self, path=None):
+        await self._proxy_request("PUT", path or "")
+
+    async def delete(self, path=None):
+        await self._proxy_request("DELETE", path or "")
+
+    async def head(self, path=None):
+        await self._proxy_request("HEAD", path or "")
+
+    async def patch(self, path=None):
+        await self._proxy_request("PATCH", path or "")
+
+    def get_user_comfy_url(self):
+        session_id = self.get_secure_cookie("session_id")
+        if not session_id:
+            return None
+
+        session_data = get_session(session_id.decode())
+        return session_data.get("comfy_url") if session_data else None
+
+    def _get_port_from_host(self):
+        """Extrage portul din header-ul Host"""
+        host = self.request.headers.get("Host", "")
+        if ":" in host:
+            try:
+                return int(host.split(":")[1])
+            except:
+                pass
+        # Port implicit pentru protocol
+        if self.request.protocol == "https":
+            return 443
+        return 80
+
+    def _rewrite_urls_in_html(self, html_content, comfy_url, proxy_base_url):
+        """Rescrie toate URL-urile din HTML să pointeze către proxy"""
+
+        # Parsează URL-urile ComfyUI pentru a extrage host-ul și portul
+        parsed_comfy = urlparse(comfy_url)
+        comfy_host = parsed_comfy.netloc
+        comfy_scheme = parsed_comfy.scheme
+
+        # Proxy base URL
+        parsed_proxy = urlparse(proxy_base_url)
+        proxy_host = parsed_proxy.netloc
+        proxy_scheme = parsed_proxy.scheme
+
+        # 1. Rescrie URL-uri absolute care încep cu http://comfy_host sau https://comfy_host
+        patterns = [
+            (fr'https?://{re.escape(comfy_host)}', f'{proxy_scheme}://{proxy_host}/comfy'),
+            (fr'wss?://{re.escape(comfy_host)}', f'ws{"s" if proxy_scheme=="https" else ""}://{proxy_host}/comfy'),
+        ]
+
+        for pattern, replacement in patterns:
+            html_content = re.sub(pattern, replacement, html_content, flags=re.IGNORECASE)
+
+        # 2. Rescrie URL-uri relative care încep cu / (dar nu /static/)
+        def replace_relative_url(match):
+            full_match = match.group(0)
+            quote_char = match.group(1)
+            url = match.group(2)
+            end_quote = match.group(3)
+
+            if not url:
+                return full_match
+
+            # Nu modifica URL-urile care sunt deja pentru proxy
+            if url.startswith('/comfy/'):
+                return full_match
+
+            # Nu modifica URL-urile pentru resursele noastre
+            if url.startswith('/static/') or url.startswith('/css/') or url.startswith('/js/'):
+                return full_match
+
+            # Nu modifica URL-urile care sunt deja absolute
+            if url.startswith('http://') or url.startswith('https://') or url.startswith('ws://') or url.startswith('wss://'):
+                return full_match
+
+            # Rescrie URL-ul relativ să pointeze către /comfy/
+            if url.startswith('/'):
+                new_url = f'/comfy{url}'
+            else:
+                new_url = f'/comfy/{url}'
+
+            return f'{quote_char}{new_url}{end_quote}'
+
+        # Găsește toate URL-urile în atributele src, href, action, etc.
+        html_content = re.sub(
+            r'(src=["\'])([^"\']*)(["\'])',
+            replace_relative_url,
+            html_content
+        )
+        html_content = re.sub(
+            r'(href=["\'])([^"\']*)(["\'])',
+            replace_relative_url,
+            html_content
+        )
+        html_content = re.sub(
+            r'(action=["\'])([^"\']*)(["\'])',
+            replace_relative_url,
+            html_content
+        )
+
+        # 3. Rescrie URL-uri WebSocket în JavaScript
+        def replace_ws_url(match):
+            full_match = match.group(0)
+            ws_url = match.group(1)
+
+            parsed_ws = urlparse(ws_url)
+            if parsed_ws.netloc == comfy_host:
+                new_ws_url = f'ws{"s" if proxy_scheme=="https" else ""}://{proxy_host}/comfy{parsed_ws.path}'
+                if parsed_ws.query:
+                    new_ws_url += '?' + parsed_ws.query
+                return full_match.replace(ws_url, new_ws_url)
+            return full_match
+
+        # Găsește URL-uri WebSocket în JavaScript
+        html_content = re.sub(
+            r'["\'](wss?://[^"\']+)["\']',
+            replace_ws_url,
+            html_content
+        )
+
+        return html_content
+
+    async def _proxy_request(self, method, path):
+        session_id = self.get_secure_cookie("session_id")
+
+        # Verifică session și forced logout
+        if session_id:
+            session_id_str = session_id.decode()
+            if session_id_str in FORCED_LOGOUT_SESSIONS:
+                self.set_header("Content-Type", "text/html")
+                self.write("""
+                <html>
+                <body>
+                <script>
+                if (typeof openForcedLogoutModal === 'function') {
+                    openForcedLogoutModal();
+                } else {
+                    window.location.href = '/login';
+                }
+                </script>
+                </body>
+                </html>""")
+                return
+
+        # Verifică expirarea sesiunii
+        if session_id:
+            session_data = get_session(session_id.decode())
+            if session_data:
+                username = session_data["user"]
+                user_timeout = USERS.get(username, {}).get("session_timeout", 60)
+
+                if user_timeout > 0:
+                    timeout_seconds = user_timeout * 60
+                    if time.time() - session_data["created"] > timeout_seconds:
+                        if username in USERS:
+                            USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
+                        del sessions[session_id.decode()]
+                        self.clear_cookie("session_id")
+                        self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
+                        return
+
+        # Verifică autentificarea
+        if not is_authenticated(self):
+            if path and path.startswith(('api/', 'view/', 'upload/', 'websocket')):
+                self.set_status(401)
+                self.write({"error": "Not authenticated"})
+                return
+            elif not path or not path.startswith(('assets/', 'static/', 'favicon.', 'login', 'logout')):
+                self.redirect("/login")
+                return
+
+        # Obține URL-ul ComfyUI
+        comfy_url = self.get_user_comfy_url()
+        if not comfy_url:
+            self.redirect("/login")
+            return
+
+        # Verifică dacă instanța e gata
+        if not comfy_instances_ready.get(comfy_url, False) and not (path and path.startswith(('login', 'logout', 'health', 'waiting'))):
+            self.render("waiting.html", about_modal=ABOUT_DRAWER_HTML)
+            return
+
+        # Obține path-ul brut din URI pentru a păstra encodarea (important pentru workflow-uri în subfoldere)
+        # Folosim self.request.uri și separăm query string pentru a obține path-ul brut, încă encodat
+        raw_uri = self.request.uri
+        if '?' in raw_uri:
+            raw_path = raw_uri.split('?')[0]
+        else:
+            raw_path = raw_uri
+
+        # Elimină prefixul /comfy/ sau /comfy dacă există
+        if raw_path.startswith('/comfy/'):
+            raw_path = raw_path[7:]
+        elif raw_path == '/comfy':
+            raw_path = ''
+        elif raw_path.startswith('/'):
+            raw_path = raw_path[1:]
+
+        # Construiește URL-ul țintă. Păstrăm slash-ul dacă raw_path este gol dar cererea originală avea unul
+        comfy_url = comfy_url.rstrip('/')
+        target_url = f"{comfy_url}/{raw_path}"
+
+        if self.request.query:
+            target_url += "?" + self.request.query
+
+        session_data = get_session(self.get_secure_cookie("session_id").decode())
+        username = session_data["user"] if session_data else "unknown"
+
+        log.info(f"Proxying {method} {path} for user {username} to {target_url}")
+
+        # Pregătește clientul HTTP
+        client = tornado.httpclient.AsyncHTTPClient()
+
+        try:
+            # Pregătește headerele
+            headers = {}
+
+            # Exclude headere care nu trebuie propagate
+            exclude_headers = ['host', 'content-length', 'connection', 'keep-alive',
+                             'accept-encoding', 'content-encoding', 'transfer-encoding']
+
+            for header_name, header_value in self.request.headers.items():
+                if header_name.lower() not in exclude_headers:
+                    headers[header_name] = header_value
+
+            # Obține portul corect
+            port = self._get_port_from_host()
+
+            # Adaugă headere pentru a păstra informațiile originale
+            headers['X-Forwarded-For'] = self.request.remote_ip
+            headers['X-Forwarded-Host'] = self.request.host
+            headers['X-Forwarded-Proto'] = self.request.protocol
+            headers['X-Forwarded-Port'] = str(port)
+            headers['X-Real-IP'] = self.request.remote_ip
+            headers['X-Original-URI'] = self.request.uri
+
+            # Adaugă cookie-ul de sesiune în headere
+            if session_id:
+                headers['X-User-ID'] = username
+                headers['X-Session-ID'] = session_id.decode()
+                headers['Cookie'] = f'session_id={session_id.decode()}'
+
+            # Adaugă autentificare nginx dacă este necesară
+            add_nginx_auth_headers(headers, username)
+
+            # Pregătește body-ul cererii
+            body = None
+            if method in ["POST", "PUT", "DELETE", "PATCH"] and self.request.body:
+                body = self.request.body
+
+            # Pentru cereri mari, folosește streaming
+            streaming_callback = None
+            content_length = int(self.request.headers.get('Content-Length', 0))
+            if content_length > 10 * 1024 * 1024:  # > 10MB
+                streaming_callback = self._stream_response
+
+            # Creează cererea
+            req = tornado.httpclient.HTTPRequest(
+                url=target_url,
+                method=method,
+                headers=headers,
+                body=body,
+                follow_redirects=False,
+                connect_timeout=30,
+                request_timeout=300,  # 5 minute pentru fișiere mari
+                validate_cert=False,
+                decompress_response=False,
+                allow_nonstandard_methods=True,
+                streaming_callback=streaming_callback
+            )
+
+            # Execută cererea
+            response = await client.fetch(req, raise_error=False)
+
+            # Setează status code
+            self.set_status(response.code)
+
+            # Copiază headerele de răspuns
+            for header, value in response.headers.get_all():
+                header_lower = header.lower()
+                if header_lower not in ['content-length', 'content-encoding',
+                                      'transfer-encoding', 'connection',
+                                      'keep-alive', 'content-security-policy']:
+                    # Pentru headerele de location, modifică URL-ul să pointeze către proxy
+                    if header_lower == 'location':
+                        location = value
+                        if location.startswith(comfy_url):
+                            location = location.replace(comfy_url, f"{self.request.protocol}://{self.request.host}/comfy")
