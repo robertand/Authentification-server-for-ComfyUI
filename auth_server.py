@@ -2248,96 +2248,73 @@ class MultiInstanceProxyHandler(BaseHandler):
             return 443
         return 80
     
-    def _rewrite_urls_in_html(self, html_content, comfy_url, proxy_base_url):
-        """Rescrie toate URL-urile din HTML să pointeze către proxy"""
+    def _rewrite_urls(self, content, comfy_url, proxy_base_url):
+        """Rescrie toate URL-urile din conținut să pointeze către proxy"""
         
         # Parsează URL-urile ComfyUI pentru a extrage host-ul și portul
         parsed_comfy = urlparse(comfy_url)
         comfy_host = parsed_comfy.netloc
         comfy_scheme = parsed_comfy.scheme
+        comfy_port = parsed_comfy.port
         
         # Proxy base URL
         parsed_proxy = urlparse(proxy_base_url)
         proxy_host = parsed_proxy.netloc
         proxy_scheme = parsed_proxy.scheme
         
-        # 1. Rescrie URL-uri absolute care încep cu http://comfy_host sau https://comfy_host
-        patterns = [
-            (fr'https?://{re.escape(comfy_host)}', f'{proxy_scheme}://{proxy_host}/comfy'),
-            (fr'wss?://{re.escape(comfy_host)}', f'ws{"s" if proxy_scheme=="https" else ""}://{proxy_host}/comfy'),
-        ]
-        
-        for pattern, replacement in patterns:
-            html_content = re.sub(pattern, replacement, html_content, flags=re.IGNORECASE)
-        
-        # 2. Rescrie URL-uri relative care încep cu / (dar nu /static/)
+        # Identifică variante de host intern (localhost, 127.0.0.1, IP local)
+        local_ip = get_local_ip()
+        internal_hosts = {comfy_host, "localhost", "127.0.0.1", local_ip}
+        if comfy_port:
+            internal_hosts.add(f"localhost:{comfy_port}")
+            internal_hosts.add(f"127.0.0.1:{comfy_port}")
+            internal_hosts.add(f"{local_ip}:{comfy_port}")
+
+        # 1. Rescrie URL-uri absolute
+        for host in internal_hosts:
+            # HTTP/HTTPS
+            pattern = fr'https?://{re.escape(host)}'
+            replacement = f'{proxy_scheme}://{proxy_host}/comfy'
+            content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
+
+            # WS/WSS
+            pattern = fr'wss?://{re.escape(host)}'
+            replacement = f'ws{"s" if proxy_scheme=="https" else ""}://{proxy_host}/comfy'
+            content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
+
+        # 2. Rescrie URL-uri relative care încep cu / (dar nu /static/ etc)
         def replace_relative_url(match):
             full_match = match.group(0)
-            quote_char = match.group(1)
+            prefix = match.group(1)
             url = match.group(2)
-            end_quote = match.group(3)
+            suffix = match.group(3)
             
             if not url:
                 return full_match
             
-            # Nu modifica URL-urile care sunt deja pentru proxy
-            if url.startswith('/comfy/'):
-                return full_match
-            
-            # Nu modifica URL-urile pentru resursele noastre
-            if url.startswith('/static/') or url.startswith('/css/') or url.startswith('/js/'):
-                return full_match
-            
-            # Nu modifica URL-urile care sunt deja absolute
-            if url.startswith('http://') or url.startswith('https://') or url.startswith('ws://') or url.startswith('wss://'):
+            # Nu modifica URL-urile care sunt deja pentru proxy sau resurse interne
+            if url.startswith(('/comfy/', '/static/', '/css/', '/js/', 'http://', 'https://', 'ws://', 'wss://', 'data:', 'blob:')):
                 return full_match
             
             # Rescrie URL-ul relativ să pointeze către /comfy/
-            if url.startswith('/'):
-                new_url = f'/comfy{url}'
-            else:
-                new_url = f'/comfy/{url}'
-            
-            return f'{quote_char}{new_url}{end_quote}'
+            new_url = f'/comfy{url}' if url.startswith('/') else f'/comfy/{url}'
+            return f'{prefix}{new_url}{suffix}'
+
+        # Atribute HTML comune care conțin URL-uri
+        attrs = ['src', 'href', 'action', 'data-src', 'data-href']
+        for attr in attrs:
+            content = re.sub(
+                fr'({attr}=["\'])([^"\']*)(["\'])',
+                replace_relative_url,
+                content
+            )
         
-        # Găsește toate URL-urile în atributele src, href, action, etc.
-        html_content = re.sub(
-            r'(src=["\'])([^"\']*)(["\'])',
-            replace_relative_url,
-            html_content
-        )
-        html_content = re.sub(
-            r'(href=["\'])([^"\']*)(["\'])',
-            replace_relative_url,
-            html_content
-        )
-        html_content = re.sub(
-            r'(action=["\'])([^"\']*)(["\'])',
-            replace_relative_url,
-            html_content
-        )
-        
-        # 3. Rescrie URL-uri WebSocket în JavaScript
-        def replace_ws_url(match):
-            full_match = match.group(0)
-            ws_url = match.group(1)
-            
-            parsed_ws = urlparse(ws_url)
-            if parsed_ws.netloc == comfy_host:
-                new_ws_url = f'ws{"s" if proxy_scheme=="https" else ""}://{proxy_host}/comfy{parsed_ws.path}'
-                if parsed_ws.query:
-                    new_ws_url += '?' + parsed_ws.query
-                return full_match.replace(ws_url, new_ws_url)
-            return full_match
-        
-        # Găsește URL-uri WebSocket în JavaScript
-        html_content = re.sub(
-            r'["\'](wss?://[^"\']+)["\']',
-            replace_ws_url,
-            html_content
-        )
-        
-        return html_content
+        # 3. Rescrie URL-uri absolute în șiruri de caractere (JSON sau JS)
+        # Căutăm orice referință la host-urile interne în șiruri de caractere
+        for host in internal_hosts:
+            content = content.replace(f'://{host}', f'://{proxy_host}/comfy')
+
+        return content
     
     async def _proxy_request(self, method, path):
         session_id = self.get_secure_cookie("session_id")
@@ -2445,6 +2422,25 @@ class MultiInstanceProxyHandler(BaseHandler):
             # Obține portul corect
             port = self._get_port_from_host()
             
+            # Setează Host header corect pentru instanța internă
+            parsed_target = urlparse(target_url)
+            headers['Host'] = parsed_target.netloc
+
+            # Rescrie Origin și Referer pentru a părea că vin de la instanța internă
+            if 'Origin' in headers:
+                headers['Origin'] = f"{parsed_target.scheme}://{parsed_target.netloc}"
+            if 'Referer' in headers:
+                # Păstrăm path-ul dar schimbăm baza
+                parsed_referer = urlparse(headers['Referer'])
+                headers['Referer'] = urlunparse((
+                    parsed_target.scheme,
+                    parsed_target.netloc,
+                    parsed_referer.path,
+                    parsed_referer.params,
+                    parsed_referer.query,
+                    parsed_referer.fragment
+                ))
+
             # Adaugă headere pentru a păstra informațiile originale
             headers['X-Forwarded-For'] = self.request.remote_ip
             headers['X-Forwarded-Host'] = self.request.host
@@ -2517,11 +2513,12 @@ class MultiInstanceProxyHandler(BaseHandler):
             if streaming_callback:
                 return
             
-            # Pentru răspunsuri HTML, rescrie URL-urile și injectează UI-ul
+            # Pentru răspunsuri HTML sau JSON, rescrie URL-urile și injectează UI-ul
             content_type = response.headers.get('Content-Type', '').lower()
-            is_html_response = 'text/html' in content_type and response.code == 200
+            is_html = 'text/html' in content_type and response.code == 200
+            is_json = 'application/json' in content_type and response.code == 200
             
-            if is_html_response and response.body:
+            if (is_html or is_json) and response.body:
                 try:
                     # Determină encoding-ul
                     encoding = 'utf-8'
@@ -2530,16 +2527,17 @@ class MultiInstanceProxyHandler(BaseHandler):
                         if charset_match:
                             encoding = charset_match.group(1)
                     
-                    html_content = response.body.decode(encoding, errors='replace')
+                    content = response.body.decode(encoding, errors='replace')
                     
-                    # Rescrie URL-urile în HTML
+                    # Rescrie URL-urile
                     proxy_base_url = f"{self.request.protocol}://{self.request.host}"
-                    html_content = self._rewrite_urls_in_html(html_content, comfy_url, proxy_base_url)
+                    content = self._rewrite_urls(content, comfy_url, proxy_base_url)
                     
-                    # Injectează UI-ul nostru
-                    html_content = self._inject_ui(html_content, username)
+                    # Injectează UI-ul nostru doar în HTML
+                    if is_html:
+                        content = self._inject_ui(content, username)
                     
-                    self.write(html_content.encode(encoding))
+                    self.write(content.encode(encoding))
                 except Exception as e:
                     log.error(f"Error modifying HTML: {str(e)}", exc_info=True)
                     self.write(response.body)
@@ -2845,9 +2843,19 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
             
             log.info(f"WebSocket connecting with session in URL: {comfy_ws_url_with_params}")
             
+            # Pregătește headerele pentru WebSocket
+            ws_headers = {}
+            for h in ['User-Agent', 'Accept-Language', 'Cookie']:
+                if h in self.request.headers:
+                    ws_headers[h] = self.request.headers[h]
+
+            ws_headers['Host'] = parsed_url.netloc
+            ws_headers['Origin'] = f"{'https' if parsed_url.scheme == 'wss' else 'http'}://{parsed_url.netloc}"
+
             # Conectează-te la WebSocket-ul destinație
             self.comfy_ws = await tornado.websocket.websocket_connect(
                 comfy_ws_url_with_params,
+                headers=ws_headers,
                 ping_interval=30,
                 ping_timeout=10,
                 connect_timeout=30,
