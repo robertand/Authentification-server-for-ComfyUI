@@ -2250,7 +2250,8 @@ class MultiInstanceProxyHandler(BaseHandler):
     
     def _rewrite_urls(self, content, comfy_url, proxy_base_url):
         """Rescrie toate URL-urile din conținut să pointeze către proxy"""
-        
+        if not content: return content
+
         # Parsează URL-urile ComfyUI pentru a extrage host-ul și portul
         parsed_comfy = urlparse(comfy_url)
         comfy_host = parsed_comfy.netloc
@@ -2270,6 +2271,15 @@ class MultiInstanceProxyHandler(BaseHandler):
             internal_hosts.add(f"127.0.0.1:{comfy_port}")
             internal_hosts.add(f"{local_ip}:{comfy_port}")
 
+        # Rute interne care NU trebuie rescrise/prefixate
+        internal_routes = (
+            '/comfy/', '/static/', '/css/', '/js/', '/login', '/logout',
+            '/user-status', '/user-settings', '/chat-', '/send-message',
+            '/upload-chat', '/download-file', '/mark-messages', '/unread-messages',
+            '/chat-ws', '/health', '/check-session', '/refresh-session', '/api/workflows',
+            'http://', 'https://', 'ws://', 'wss://', 'data:', 'blob:'
+        )
+
         # 1. Rescrie URL-uri absolute
         for host in internal_hosts:
             # HTTP/HTTPS
@@ -2282,18 +2292,17 @@ class MultiInstanceProxyHandler(BaseHandler):
             replacement = f'ws{"s" if proxy_scheme=="https" else ""}://{proxy_host}/comfy'
             content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
 
-        # 2. Rescrie URL-uri relative care încep cu / (dar nu /static/ etc)
+        # 2. Rescrie URL-uri relative care încep cu /
         def replace_relative_url(match):
             full_match = match.group(0)
             prefix = match.group(1)
             url = match.group(2)
             suffix = match.group(3)
             
-            if not url:
-                return full_match
+            if not url: return full_match
             
-            # Nu modifica URL-urile care sunt deja pentru proxy sau resurse interne
-            if url.startswith(('/comfy/', '/static/', '/css/', '/js/', 'http://', 'https://', 'ws://', 'wss://', 'data:', 'blob:')):
+            # Nu modifica URL-urile interne
+            if url.startswith(internal_routes):
                 return full_match
             
             # Rescrie URL-ul relativ să pointeze către /comfy/
@@ -2310,8 +2319,10 @@ class MultiInstanceProxyHandler(BaseHandler):
             )
         
         # 3. Rescrie URL-uri absolute în șiruri de caractere (JSON sau JS)
-        # Căutăm orice referință la host-urile interne în șiruri de caractere
         for host in internal_hosts:
+            # Înlocuim ://host cu ://proxy_host/comfy
+            # Dar atenție să nu dublăm /comfy dacă e deja acolo
+            content = content.replace(f'://{host}/comfy', f'://{proxy_host}/comfy')
             content = content.replace(f'://{host}', f'://{proxy_host}/comfy')
 
         return content
@@ -2422,25 +2433,6 @@ class MultiInstanceProxyHandler(BaseHandler):
             # Obține portul corect
             port = self._get_port_from_host()
             
-            # Setează Host header corect pentru instanța internă
-            parsed_target = urlparse(target_url)
-            headers['Host'] = parsed_target.netloc
-
-            # Rescrie Origin și Referer pentru a părea că vin de la instanța internă
-            if 'Origin' in headers:
-                headers['Origin'] = f"{parsed_target.scheme}://{parsed_target.netloc}"
-            if 'Referer' in headers:
-                # Păstrăm path-ul dar schimbăm baza
-                parsed_referer = urlparse(headers['Referer'])
-                headers['Referer'] = urlunparse((
-                    parsed_target.scheme,
-                    parsed_target.netloc,
-                    parsed_referer.path,
-                    parsed_referer.params,
-                    parsed_referer.query,
-                    parsed_referer.fragment
-                ))
-
             # Adaugă headere pentru a păstra informațiile originale
             headers['X-Forwarded-For'] = self.request.remote_ip
             headers['X-Forwarded-Host'] = self.request.host
@@ -2852,13 +2844,19 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
             ws_headers['Host'] = parsed_url.netloc
             ws_headers['Origin'] = f"{'https' if parsed_url.scheme == 'wss' else 'http'}://{parsed_url.netloc}"
 
-            # Conectează-te la WebSocket-ul destinație
-            self.comfy_ws = await tornado.websocket.websocket_connect(
-                comfy_ws_url_with_params,
+            # Conectează-te la WebSocket-ul destinație folosind HTTPRequest pentru a include headerele
+            request = tornado.httpclient.HTTPRequest(
+                url=comfy_ws_url_with_params,
                 headers=ws_headers,
+                connect_timeout=30,
+                request_timeout=300,
+                validate_cert=False
+            )
+
+            self.comfy_ws = await tornado.websocket.websocket_connect(
+                request,
                 ping_interval=30,
                 ping_timeout=10,
-                connect_timeout=30,
                 max_message_size=500 * 1024 * 1024  # 500MB pentru fișiere mari
             )
             
