@@ -671,16 +671,20 @@ class BaseHandler(tornado.web.RequestHandler):
     def prepare(self):
         set_security_headers(self)
 
-class LoginHandler(BaseHandler):
     def get_client_ip(self):
-        real_ip = self.request.headers.get("X-Real-IP")
-        if real_ip:
-            return real_ip
+        # Prioritize X-Forwarded-For as it's standard for multiple proxies
         forwarded_for = self.request.headers.get("X-Forwarded-For")
         if forwarded_for:
             return forwarded_for.split(",")[0].strip()
+
+        # Then X-Real-IP
+        real_ip = self.request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip
+
         return self.request.remote_ip
 
+class LoginHandler(BaseHandler):
     def get(self):
         if is_authenticated(self):
             self.redirect("/")
@@ -1475,7 +1479,8 @@ class AdminLoginHandler(BaseHandler):
         # Verifică parola
         if check_password(ADMIN_CONFIG["password"], password):
             session_id = create_admin_session()
-            self.set_secure_cookie("admin_session_id", session_id, expires_days=1)
+            # Set path="/" to ensure it's sent for all /admin/api/ requests
+            self.set_secure_cookie("admin_session_id", session_id, expires_days=1, path="/")
             
             RateLimiter.clear_attempts(client_ip)
             
@@ -1504,7 +1509,7 @@ class AdminLogoutHandler(BaseHandler):
             if session_id in admin_sessions:
                 del admin_sessions[session_id]
                 log.info("Admin logged out")
-        self.clear_cookie("admin_session_id")
+        self.clear_cookie("admin_session_id", path="/")
 
 # === HANDLERE PENTRU ADMIN INTERFACE ===
 class AdminHandler(BaseHandler):
@@ -2206,8 +2211,7 @@ class MultiInstanceProxyHandler(BaseHandler):
         self.set_header("Access-Control-Allow-Credentials", "true")
     
     async def options(self, path=None):
-        self.set_status(204)
-        self.finish()
+        await self._proxy_request("OPTIONS", path or "")
     
     async def get(self, path=None):
         await self._proxy_request("GET", path or "")
@@ -2433,19 +2437,62 @@ class MultiInstanceProxyHandler(BaseHandler):
             # Obține portul corect
             port = self._get_port_from_host()
             
-            # Adaugă headere pentru a păstra informațiile originale
-            headers['X-Forwarded-For'] = self.request.remote_ip
-            headers['X-Forwarded-Host'] = self.request.host
+            # Setează Host header corect pentru instanța internă
+            parsed_target = urlparse(target_url)
+            target_netloc = parsed_target.netloc
+            headers['Host'] = target_netloc
+
+            # Rescrie Origin și Referer pentru a părea că vin de la instanța internă
+            auth_host = self.request.host
+            if 'Origin' in headers:
+                # Spoof exact origin - always match target scheme and netloc
+                headers['Origin'] = f"{parsed_target.scheme}://{target_netloc}"
+
+            if 'Referer' in headers:
+                # Spoof referer to match target, stripping /comfy prefix if present
+                ref_parsed = urlparse(headers['Referer'])
+                ref_path = ref_parsed.path
+                if ref_path.startswith('/comfy/'):
+                    ref_path = ref_path[6:] # Keep the leading /
+                elif ref_path == '/comfy':
+                    ref_path = '/'
+
+                headers['Referer'] = urlunparse((
+                    parsed_target.scheme,
+                    target_netloc,
+                    ref_path,
+                    ref_parsed.params,
+                    ref_parsed.query,
+                    ref_parsed.fragment
+                ))
+
+            # Manevrarea Sec-Fetch headers pentru a evita 403 Forbidden
+            # Force 'same-origin' since we are proxying to an internal address
+            if 'Sec-Fetch-Site' in headers:
+                headers['Sec-Fetch-Site'] = 'same-origin'
+
+            # Adaugă headere standard de proxy
+            client_ip = self.get_client_ip()
+            headers['X-Forwarded-For'] = client_ip
+            # We don't set X-Forwarded-Host to target_netloc because it might confuse some apps
+            # We already set the 'Host' header which is more critical.
             headers['X-Forwarded-Proto'] = self.request.protocol
             headers['X-Forwarded-Port'] = str(port)
-            headers['X-Real-IP'] = self.request.remote_ip
-            headers['X-Original-URI'] = self.request.uri
+            headers['X-Real-IP'] = client_ip
             
-            # Adaugă cookie-ul de sesiune în headere
+            # Adăugă headere de identificare pentru uz intern
             if session_id:
                 headers['X-User-ID'] = username
                 headers['X-Session-ID'] = session_id.decode()
-                headers['Cookie'] = f'session_id={session_id.decode()}'
+
+            # Curăță Cookie header de cookie-urile noastre interne
+            if 'Cookie' in headers:
+                cookies = headers['Cookie'].split('; ')
+                filtered_cookies = [c for c in cookies if not c.startswith(('session_id=', 'admin_session_id='))]
+                if filtered_cookies:
+                    headers['Cookie'] = '; '.join(filtered_cookies)
+                else:
+                    del headers['Cookie']
             
             # Adaugă autentificare nginx dacă este necesară
             add_nginx_auth_headers(headers, username)
@@ -2479,6 +2526,14 @@ class MultiInstanceProxyHandler(BaseHandler):
             # Execută cererea
             response = await client.fetch(req, raise_error=False)
             
+            # Logare pentru depanare 403
+            if response.code == 403:
+                log.warning(f"403 Forbidden from upstream for {target_url}")
+                log.debug(f"Request Headers: {headers}")
+                log.debug(f"Response Headers: {response.headers}")
+                if response.body:
+                    log.debug(f"Response Body: {response.body[:500]}")
+
             # Setează status code
             self.set_status(response.code)
             
@@ -2494,12 +2549,17 @@ class MultiInstanceProxyHandler(BaseHandler):
                         if location.startswith(comfy_url):
                             location = location.replace(comfy_url, f"{self.request.protocol}://{self.request.host}/comfy")
                         self.set_header(header, location)
+                    elif header_lower.startswith('access-control-allow-'):
+                        # Păstrăm headerul de CORS de la upstream
+                        self.set_header(header, value)
                     else:
                         self.set_header(header, value)
             
-            # Setează headere CORS
-            self.set_header("Access-Control-Allow-Origin", "*")
-            self.set_header("Access-Control-Allow-Credentials", "true")
+            # Asigură headere CORS minime dacă lipsesc sau sunt restrictiv
+            if not self.get_header("Access-Control-Allow-Origin"):
+                self.set_header("Access-Control-Allow-Origin", "*")
+            if not self.get_header("Access-Control-Allow-Credentials"):
+                self.set_header("Access-Control-Allow-Credentials", "true")
             
             # Dacă s-a folosit streaming, răspunsul a fost deja trimis
             if streaming_callback:
@@ -2507,8 +2567,9 @@ class MultiInstanceProxyHandler(BaseHandler):
             
             # Pentru răspunsuri HTML sau JSON, rescrie URL-urile și injectează UI-ul
             content_type = response.headers.get('Content-Type', '').lower()
-            is_html = 'text/html' in content_type and response.code == 200
-            is_json = 'application/json' in content_type and response.code == 200
+            # Permitem rescrierea și pentru coduri de eroare (ex: 403) dacă e HTML/JSON
+            is_html = 'text/html' in content_type and response.code not in [204, 304]
+            is_json = 'application/json' in content_type and response.code not in [204, 304]
             
             if (is_html or is_json) and response.body:
                 try:
@@ -2525,8 +2586,8 @@ class MultiInstanceProxyHandler(BaseHandler):
                     proxy_base_url = f"{self.request.protocol}://{self.request.host}"
                     content = self._rewrite_urls(content, comfy_url, proxy_base_url)
                     
-                    # Injectează UI-ul nostru doar în HTML
-                    if is_html:
+                    # Injectează UI-ul nostru doar în HTML (doar pe succes)
+                    if is_html and response.code == 200:
                         content = self._inject_ui(content, username)
                     
                     self.write(content.encode(encoding))
