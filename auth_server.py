@@ -2901,23 +2901,45 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
                 if h in self.request.headers:
                     ws_headers[h] = self.request.headers[h]
 
+            # Adaugă Referer rewriten pentru WebSocket
+            if 'Referer' in self.request.headers:
+                ref_parsed = urlparse(self.request.headers['Referer'])
+                ref_path = ref_parsed.path
+                if ref_path.startswith('/comfy/'):
+                    ref_path = ref_path[6:]
+                elif ref_path == '/comfy':
+                    ref_path = '/'
+
+                ws_headers['Referer'] = urlunparse((
+                    'http' if parsed_url.scheme == 'ws' else 'https',
+                    parsed_url.netloc,
+                    ref_path,
+                    ref_parsed.params,
+                    ref_parsed.query,
+                    ref_parsed.fragment
+                ))
+
             ws_headers['Host'] = parsed_url.netloc
             ws_headers['Origin'] = f"{'https' if parsed_url.scheme == 'wss' else 'http'}://{parsed_url.netloc}"
             ws_headers['Sec-Fetch-Site'] = 'same-origin'
+
+            # Forward client IP
+            ws_headers['X-Forwarded-For'] = self.request.headers.get("X-Forwarded-For", self.request.remote_ip)
+            ws_headers['X-Real-IP'] = self.request.headers.get("X-Real-IP", self.request.remote_ip)
 
             # Conectează-te la WebSocket-ul destinație folosind HTTPRequest pentru a include headerele
             request = tornado.httpclient.HTTPRequest(
                 url=comfy_ws_url_with_params,
                 headers=ws_headers,
-                connect_timeout=30,
-                request_timeout=300,
+                connect_timeout=60,
+                request_timeout=600,
                 validate_cert=False
             )
 
             self.comfy_ws = await tornado.websocket.websocket_connect(
                 request,
-                ping_interval=30,
-                ping_timeout=10,
+                ping_interval=20,
+                ping_timeout=30,
                 max_message_size=500 * 1024 * 1024  # 500MB pentru fișiere mari
             )
             
@@ -2977,14 +2999,25 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
         log.info(f"WebSocket closed for user {self.username}")
     
     async def _keep_alive(self):
-        """Trimite ping-uri pentru a menține conexiunea vie"""
+        """Trimite ping-uri pentru a menține conexiunea vie (beat la 20s pentru a preveni timeout Nginx)"""
         while self._running:
-            await asyncio.sleep(30)
-            if self._running and self.comfy_ws:
+            await asyncio.sleep(20)
+            if not self._running:
+                break
+
+            # Ping backend (ComfyUI)
+            if self.comfy_ws:
                 try:
-                    await self.comfy_ws.write_message(b'', binary=True)
+                    self.comfy_ws.ping(b'ping')
                 except:
                     pass
+
+            # Ping client (browser via Nginx)
+            try:
+                if self.ws_connection and not self.ws_connection.is_closing():
+                    self.ping(b'ping')
+            except:
+                pass
 
 # === SIMPLE PROXY FOR STATIC FILES ===
 class StaticFileProxyHandler(BaseHandler):
@@ -3132,8 +3165,9 @@ def make_auth_app():
     serve_traceback=False,
     cookie_secret=config["cookie_secret"],
     login_url="/login",
-    websocket_ping_interval=30,
-    websocket_ping_timeout=10
+    websocket_ping_interval=20,
+    websocket_ping_timeout=30,
+    websocket_max_message_size=500 * 1024 * 1024
     )
 
 def make_admin_app():
