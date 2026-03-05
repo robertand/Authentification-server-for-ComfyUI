@@ -30,31 +30,15 @@ from concurrent.futures import ThreadPoolExecutor
 # === MODAL COMPONENTS ===
 ABOUT_DRAWER_HTML = """
 <div id="aboutDrawer" class="about-drawer">
-    <button class="about-drawer-close" onclick="closeAboutDrawer()">&times;</button>
     <div class="about-drawer-content">
         <h2>PRO AI Server v0.4.5</h2>
-        <p><strong>Advanced management and authentication system for ComfyUI</strong></p>
-
         <div class="about-glass-card">
-            <h3>Key Features:</h3>
-            <ul>
-                <li><strong>Multi-User Architecture</strong> - Separate instances for every user</li>
-                <li><strong>Dark Glass Interface</strong> - Modern drawer-based navigation</li>
-                <li><strong>Integrated Chat</strong> - Peer-to-peer and Admin communication</li>
-                <li><strong>Enhanced Security</strong> - Hashed passwords & Rate limiting</li>
-                <li><strong>Full Proxy</strong> - Secure access to remote instances</li>
-            </ul>
+            <p>Sistem avansat de management și autentificare pentru instanțe multiple ComfyUI.</p>
+            <p>Toate sistemele sunt operaționale. Nodurile GPU de înaltă performanță sunt active.</p>
         </div>
-
-        <div class="about-glass-card">
-            <h3>System Status:</h3>
-            <p>All systems operational. High-performance GPU nodes active.</p>
-        </div>
-
         <div style="margin-top: 30px; text-align: center; opacity: 0.7; font-size: 12px;">
-            <p>Version 0.4.5 - Built for PRO AI Creative Teams</p>
+            <p>Versiunea 0.4.5 - Creat pentru echipele PRO AI</p>
         </div>
-        <button class="about-close-btn" style="width: 100%; margin-top: 20px;" onclick="closeAboutDrawer()">Dismiss</button>
     </div>
 </div>
 """
@@ -1530,6 +1514,10 @@ class AdminStatusHandler(BaseHandler):
         
         user_status = {}
         for username, user_data in USERS.items():
+            unread_count = 0
+            if username in CHAT_MESSAGES:
+                unread_count = sum(1 for msg in CHAT_MESSAGES[username] if msg["from"] == username and not msg.get("read", False))
+
             user_status[username] = {
                 "instances": user_data["instances"],
                 "max_instances": user_data["max_instances"],
@@ -1537,7 +1525,8 @@ class AdminStatusHandler(BaseHandler):
                 "comfy_url": user_data["comfy_url"],
                 "ready": comfy_instances_ready.get(user_data["comfy_url"], False),
                 "enabled": user_data.get("enabled", True),
-                "nginx_auth": user_data.get("nginx_auth", {"enabled": False})
+                "nginx_auth": user_data.get("nginx_auth", {"enabled": False}),
+                "unread_count": unread_count
             }
         
         self.write({
@@ -1896,7 +1885,7 @@ class AdminChatUsersHandler(BaseHandler):
         for username in USERS.keys():
             unread_count = 0
             if username in CHAT_MESSAGES:
-                unread_count = sum(1 for msg in CHAT_MESSAGES[username] if msg["from"] == "user" and not msg["read"])
+                unread_count = sum(1 for msg in CHAT_MESSAGES[username] if msg["from"] == username and not msg.get("read", False))
             
             users.append({
                 "username": username,
@@ -2042,7 +2031,7 @@ class AdminChatMarkReadHandler(BaseHandler):
             
         if username in CHAT_MESSAGES:
             for msg in CHAT_MESSAGES[username]:
-                if msg["from"] == "user":
+                if msg["from"] == username:
                     msg["read"] = True
         
         self.set_status(200)
