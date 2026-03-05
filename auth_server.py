@@ -2466,10 +2466,9 @@ class MultiInstanceProxyHandler(BaseHandler):
                     ref_parsed.fragment
                 ))
 
-            # Manevrarea Sec-Fetch headers pentru a evita 403 Forbidden
             # Force 'same-origin' since we are proxying to an internal address
-            if 'Sec-Fetch-Site' in headers:
-                headers['Sec-Fetch-Site'] = 'same-origin'
+            # This helps avoid 403 Forbidden on some setups
+            headers['Sec-Fetch-Site'] = 'same-origin'
 
             # Adaugă headere standard de proxy
             client_ip = self.get_client_ip()
@@ -2555,10 +2554,10 @@ class MultiInstanceProxyHandler(BaseHandler):
                     else:
                         self.set_header(header, value)
             
-            # Asigură headere CORS minime dacă lipsesc sau sunt restrictiv
-            if not self.get_header("Access-Control-Allow-Origin"):
+            # Asigură headere CORS minime dacă lipsesc
+            if "Access-Control-Allow-Origin" not in self._headers:
                 self.set_header("Access-Control-Allow-Origin", "*")
-            if not self.get_header("Access-Control-Allow-Credentials"):
+            if "Access-Control-Allow-Credentials" not in self._headers:
                 self.set_header("Access-Control-Allow-Credentials", "true")
             
             # Dacă s-a folosit streaming, răspunsul a fost deja trimis
@@ -2904,6 +2903,7 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
 
             ws_headers['Host'] = parsed_url.netloc
             ws_headers['Origin'] = f"{'https' if parsed_url.scheme == 'wss' else 'http'}://{parsed_url.netloc}"
+            ws_headers['Sec-Fetch-Site'] = 'same-origin'
 
             # Conectează-te la WebSocket-ul destinație folosind HTTPRequest pentru a include headerele
             request = tornado.httpclient.HTTPRequest(
