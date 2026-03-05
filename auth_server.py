@@ -30,31 +30,15 @@ from concurrent.futures import ThreadPoolExecutor
 # === MODAL COMPONENTS ===
 ABOUT_DRAWER_HTML = """
 <div id="aboutDrawer" class="about-drawer">
-    <button class="about-drawer-close" onclick="closeAboutDrawer()">&times;</button>
     <div class="about-drawer-content">
         <h2>PRO AI Server v0.4.5</h2>
-        <p><strong>Advanced management and authentication system for ComfyUI</strong></p>
-
         <div class="about-glass-card">
-            <h3>Key Features:</h3>
-            <ul>
-                <li><strong>Multi-User Architecture</strong> - Separate instances for every user</li>
-                <li><strong>Dark Glass Interface</strong> - Modern drawer-based navigation</li>
-                <li><strong>Integrated Chat</strong> - Peer-to-peer and Admin communication</li>
-                <li><strong>Enhanced Security</strong> - Hashed passwords & Rate limiting</li>
-                <li><strong>Full Proxy</strong> - Secure access to remote instances</li>
-            </ul>
+            <p>Sistem avansat de management și autentificare pentru instanțe multiple ComfyUI.</p>
+            <p>Toate sistemele sunt operaționale. Nodurile GPU de înaltă performanță sunt active.</p>
         </div>
-
-        <div class="about-glass-card">
-            <h3>System Status:</h3>
-            <p>All systems operational. High-performance GPU nodes active.</p>
-        </div>
-
         <div style="margin-top: 30px; text-align: center; opacity: 0.7; font-size: 12px;">
-            <p>Version 0.4.5 - Built for PRO AI Creative Teams</p>
+            <p>Versiunea 0.4.5 - Creat pentru echipele PRO AI</p>
         </div>
-        <button class="about-close-btn" style="width: 100%; margin-top: 20px;" onclick="closeAboutDrawer()">Dismiss</button>
     </div>
 </div>
 """
@@ -671,16 +655,20 @@ class BaseHandler(tornado.web.RequestHandler):
     def prepare(self):
         set_security_headers(self)
 
-class LoginHandler(BaseHandler):
     def get_client_ip(self):
-        real_ip = self.request.headers.get("X-Real-IP")
-        if real_ip:
-            return real_ip
+        # Prioritize X-Forwarded-For as it's standard for multiple proxies
         forwarded_for = self.request.headers.get("X-Forwarded-For")
         if forwarded_for:
             return forwarded_for.split(",")[0].strip()
+
+        # Then X-Real-IP
+        real_ip = self.request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip
+
         return self.request.remote_ip
 
+class LoginHandler(BaseHandler):
     def get(self):
         if is_authenticated(self):
             self.redirect("/")
@@ -1475,7 +1463,8 @@ class AdminLoginHandler(BaseHandler):
         # Verifică parola
         if check_password(ADMIN_CONFIG["password"], password):
             session_id = create_admin_session()
-            self.set_secure_cookie("admin_session_id", session_id, expires_days=1)
+            # Set path="/" to ensure it's sent for all /admin/api/ requests
+            self.set_secure_cookie("admin_session_id", session_id, expires_days=1, path="/")
             
             RateLimiter.clear_attempts(client_ip)
             
@@ -1525,6 +1514,10 @@ class AdminStatusHandler(BaseHandler):
         
         user_status = {}
         for username, user_data in USERS.items():
+            unread_count = 0
+            if username in CHAT_MESSAGES:
+                unread_count = sum(1 for msg in CHAT_MESSAGES[username] if msg["from"] == username and not msg.get("read", False))
+
             user_status[username] = {
                 "instances": user_data["instances"],
                 "max_instances": user_data["max_instances"],
@@ -1532,7 +1525,8 @@ class AdminStatusHandler(BaseHandler):
                 "comfy_url": user_data["comfy_url"],
                 "ready": comfy_instances_ready.get(user_data["comfy_url"], False),
                 "enabled": user_data.get("enabled", True),
-                "nginx_auth": user_data.get("nginx_auth", {"enabled": False})
+                "nginx_auth": user_data.get("nginx_auth", {"enabled": False}),
+                "unread_count": unread_count
             }
         
         self.write({
@@ -1891,7 +1885,7 @@ class AdminChatUsersHandler(BaseHandler):
         for username in USERS.keys():
             unread_count = 0
             if username in CHAT_MESSAGES:
-                unread_count = sum(1 for msg in CHAT_MESSAGES[username] if msg["from"] == "user" and not msg["read"])
+                unread_count = sum(1 for msg in CHAT_MESSAGES[username] if msg["from"] == username and not msg.get("read", False))
             
             users.append({
                 "username": username,
@@ -2037,7 +2031,7 @@ class AdminChatMarkReadHandler(BaseHandler):
             
         if username in CHAT_MESSAGES:
             for msg in CHAT_MESSAGES[username]:
-                if msg["from"] == "user":
+                if msg["from"] == username:
                     msg["read"] = True
         
         self.set_status(200)
@@ -2206,8 +2200,7 @@ class MultiInstanceProxyHandler(BaseHandler):
         self.set_header("Access-Control-Allow-Credentials", "true")
     
     async def options(self, path=None):
-        self.set_status(204)
-        self.finish()
+        await self._proxy_request("OPTIONS", path or "")
     
     async def get(self, path=None):
         await self._proxy_request("GET", path or "")
@@ -2248,96 +2241,84 @@ class MultiInstanceProxyHandler(BaseHandler):
             return 443
         return 80
     
-    def _rewrite_urls_in_html(self, html_content, comfy_url, proxy_base_url):
-        """Rescrie toate URL-urile din HTML să pointeze către proxy"""
-        
+    def _rewrite_urls(self, content, comfy_url, proxy_base_url):
+        """Rescrie toate URL-urile din conținut să pointeze către proxy"""
+        if not content: return content
+
         # Parsează URL-urile ComfyUI pentru a extrage host-ul și portul
         parsed_comfy = urlparse(comfy_url)
         comfy_host = parsed_comfy.netloc
         comfy_scheme = parsed_comfy.scheme
+        comfy_port = parsed_comfy.port
         
         # Proxy base URL
         parsed_proxy = urlparse(proxy_base_url)
         proxy_host = parsed_proxy.netloc
         proxy_scheme = parsed_proxy.scheme
         
-        # 1. Rescrie URL-uri absolute care încep cu http://comfy_host sau https://comfy_host
-        patterns = [
-            (fr'https?://{re.escape(comfy_host)}', f'{proxy_scheme}://{proxy_host}/comfy'),
-            (fr'wss?://{re.escape(comfy_host)}', f'ws{"s" if proxy_scheme=="https" else ""}://{proxy_host}/comfy'),
-        ]
-        
-        for pattern, replacement in patterns:
-            html_content = re.sub(pattern, replacement, html_content, flags=re.IGNORECASE)
-        
-        # 2. Rescrie URL-uri relative care încep cu / (dar nu /static/)
+        # Identifică variante de host intern (localhost, 127.0.0.1, IP local)
+        local_ip = get_local_ip()
+        internal_hosts = {comfy_host, "localhost", "127.0.0.1", local_ip}
+        if comfy_port:
+            internal_hosts.add(f"localhost:{comfy_port}")
+            internal_hosts.add(f"127.0.0.1:{comfy_port}")
+            internal_hosts.add(f"{local_ip}:{comfy_port}")
+
+        # Rute interne care NU trebuie rescrise/prefixate
+        internal_routes = (
+            '/comfy/', '/static/', '/css/', '/js/', '/login', '/logout',
+            '/user-status', '/user-settings', '/chat-', '/send-message',
+            '/upload-chat', '/download-file', '/mark-messages', '/unread-messages',
+            '/chat-ws', '/health', '/check-session', '/refresh-session', '/api/workflows',
+            'http://', 'https://', 'ws://', 'wss://', 'data:', 'blob:'
+        )
+
+        # 1. Rescrie URL-uri absolute
+        for host in internal_hosts:
+            # HTTP/HTTPS
+            pattern = fr'https?://{re.escape(host)}'
+            replacement = f'{proxy_scheme}://{proxy_host}/comfy'
+            content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
+
+            # WS/WSS
+            pattern = fr'wss?://{re.escape(host)}'
+            replacement = f'ws{"s" if proxy_scheme=="https" else ""}://{proxy_host}/comfy'
+            content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
+
+        # 2. Rescrie URL-uri relative care încep cu /
         def replace_relative_url(match):
             full_match = match.group(0)
-            quote_char = match.group(1)
+            prefix = match.group(1)
             url = match.group(2)
-            end_quote = match.group(3)
+            suffix = match.group(3)
             
-            if not url:
-                return full_match
+            if not url: return full_match
             
-            # Nu modifica URL-urile care sunt deja pentru proxy
-            if url.startswith('/comfy/'):
-                return full_match
-            
-            # Nu modifica URL-urile pentru resursele noastre
-            if url.startswith('/static/') or url.startswith('/css/') or url.startswith('/js/'):
-                return full_match
-            
-            # Nu modifica URL-urile care sunt deja absolute
-            if url.startswith('http://') or url.startswith('https://') or url.startswith('ws://') or url.startswith('wss://'):
+            # Nu modifica URL-urile interne
+            if url.startswith(internal_routes):
                 return full_match
             
             # Rescrie URL-ul relativ să pointeze către /comfy/
-            if url.startswith('/'):
-                new_url = f'/comfy{url}'
-            else:
-                new_url = f'/comfy/{url}'
-            
-            return f'{quote_char}{new_url}{end_quote}'
+            new_url = f'/comfy{url}' if url.startswith('/') else f'/comfy/{url}'
+            return f'{prefix}{new_url}{suffix}'
+
+        # Atribute HTML comune care conțin URL-uri
+        attrs = ['src', 'href', 'action', 'data-src', 'data-href']
+        for attr in attrs:
+            content = re.sub(
+                fr'({attr}=["\'])([^"\']*)(["\'])',
+                replace_relative_url,
+                content
+            )
         
-        # Găsește toate URL-urile în atributele src, href, action, etc.
-        html_content = re.sub(
-            r'(src=["\'])([^"\']*)(["\'])',
-            replace_relative_url,
-            html_content
-        )
-        html_content = re.sub(
-            r'(href=["\'])([^"\']*)(["\'])',
-            replace_relative_url,
-            html_content
-        )
-        html_content = re.sub(
-            r'(action=["\'])([^"\']*)(["\'])',
-            replace_relative_url,
-            html_content
-        )
-        
-        # 3. Rescrie URL-uri WebSocket în JavaScript
-        def replace_ws_url(match):
-            full_match = match.group(0)
-            ws_url = match.group(1)
-            
-            parsed_ws = urlparse(ws_url)
-            if parsed_ws.netloc == comfy_host:
-                new_ws_url = f'ws{"s" if proxy_scheme=="https" else ""}://{proxy_host}/comfy{parsed_ws.path}'
-                if parsed_ws.query:
-                    new_ws_url += '?' + parsed_ws.query
-                return full_match.replace(ws_url, new_ws_url)
-            return full_match
-        
-        # Găsește URL-uri WebSocket în JavaScript
-        html_content = re.sub(
-            r'["\'](wss?://[^"\']+)["\']',
-            replace_ws_url,
-            html_content
-        )
-        
-        return html_content
+        # 3. Rescrie URL-uri absolute în șiruri de caractere (JSON sau JS)
+        for host in internal_hosts:
+            # Înlocuim ://host cu ://proxy_host/comfy
+            # Dar atenție să nu dublăm /comfy dacă e deja acolo
+            content = content.replace(f'://{host}/comfy', f'://{proxy_host}/comfy')
+            content = content.replace(f'://{host}', f'://{proxy_host}/comfy')
+
+        return content
     
     async def _proxy_request(self, method, path):
         session_id = self.get_secure_cookie("session_id")
@@ -2445,19 +2426,61 @@ class MultiInstanceProxyHandler(BaseHandler):
             # Obține portul corect
             port = self._get_port_from_host()
             
-            # Adaugă headere pentru a păstra informațiile originale
-            headers['X-Forwarded-For'] = self.request.remote_ip
-            headers['X-Forwarded-Host'] = self.request.host
+            # Setează Host header corect pentru instanța internă
+            parsed_target = urlparse(target_url)
+            target_netloc = parsed_target.netloc
+            headers['Host'] = target_netloc
+
+            # Rescrie Origin și Referer pentru a părea că vin de la instanța internă
+            auth_host = self.request.host
+            if 'Origin' in headers:
+                # Spoof exact origin - always match target scheme and netloc
+                headers['Origin'] = f"{parsed_target.scheme}://{target_netloc}"
+
+            if 'Referer' in headers:
+                # Spoof referer to match target, stripping /comfy prefix if present
+                ref_parsed = urlparse(headers['Referer'])
+                ref_path = ref_parsed.path
+                if ref_path.startswith('/comfy/'):
+                    ref_path = ref_path[6:] # Keep the leading /
+                elif ref_path == '/comfy':
+                    ref_path = '/'
+
+                headers['Referer'] = urlunparse((
+                    parsed_target.scheme,
+                    target_netloc,
+                    ref_path,
+                    ref_parsed.params,
+                    ref_parsed.query,
+                    ref_parsed.fragment
+                ))
+
+            # Force 'same-origin' since we are proxying to an internal address
+            # This helps avoid 403 Forbidden on some setups
+            headers['Sec-Fetch-Site'] = 'same-origin'
+
+            # Adaugă headere standard de proxy
+            client_ip = self.get_client_ip()
+            headers['X-Forwarded-For'] = client_ip
+            # We don't set X-Forwarded-Host to target_netloc because it might confuse some apps
+            # We already set the 'Host' header which is more critical.
             headers['X-Forwarded-Proto'] = self.request.protocol
             headers['X-Forwarded-Port'] = str(port)
-            headers['X-Real-IP'] = self.request.remote_ip
-            headers['X-Original-URI'] = self.request.uri
+            headers['X-Real-IP'] = client_ip
             
-            # Adaugă cookie-ul de sesiune în headere
+            # Adăugă headere de identificare pentru uz intern
             if session_id:
                 headers['X-User-ID'] = username
                 headers['X-Session-ID'] = session_id.decode()
-                headers['Cookie'] = f'session_id={session_id.decode()}'
+
+            # Curăță Cookie header de cookie-urile noastre interne
+            if 'Cookie' in headers:
+                cookies = headers['Cookie'].split('; ')
+                filtered_cookies = [c for c in cookies if not c.startswith(('session_id=', 'admin_session_id='))]
+                if filtered_cookies:
+                    headers['Cookie'] = '; '.join(filtered_cookies)
+                else:
+                    del headers['Cookie']
             
             # Adaugă autentificare nginx dacă este necesară
             add_nginx_auth_headers(headers, username)
@@ -2491,6 +2514,14 @@ class MultiInstanceProxyHandler(BaseHandler):
             # Execută cererea
             response = await client.fetch(req, raise_error=False)
             
+            # Logare pentru depanare 403
+            if response.code == 403:
+                log.warning(f"403 Forbidden from upstream for {target_url}")
+                log.debug(f"Request Headers: {headers}")
+                log.debug(f"Response Headers: {response.headers}")
+                if response.body:
+                    log.debug(f"Response Body: {response.body[:500]}")
+
             # Setează status code
             self.set_status(response.code)
             
@@ -2506,22 +2537,29 @@ class MultiInstanceProxyHandler(BaseHandler):
                         if location.startswith(comfy_url):
                             location = location.replace(comfy_url, f"{self.request.protocol}://{self.request.host}/comfy")
                         self.set_header(header, location)
+                    elif header_lower.startswith('access-control-allow-'):
+                        # Păstrăm headerul de CORS de la upstream
+                        self.set_header(header, value)
                     else:
                         self.set_header(header, value)
             
-            # Setează headere CORS
-            self.set_header("Access-Control-Allow-Origin", "*")
-            self.set_header("Access-Control-Allow-Credentials", "true")
+            # Asigură headere CORS minime dacă lipsesc
+            if "Access-Control-Allow-Origin" not in self._headers:
+                self.set_header("Access-Control-Allow-Origin", "*")
+            if "Access-Control-Allow-Credentials" not in self._headers:
+                self.set_header("Access-Control-Allow-Credentials", "true")
             
             # Dacă s-a folosit streaming, răspunsul a fost deja trimis
             if streaming_callback:
                 return
             
-            # Pentru răspunsuri HTML, rescrie URL-urile și injectează UI-ul
+            # Pentru răspunsuri HTML sau JSON, rescrie URL-urile și injectează UI-ul
             content_type = response.headers.get('Content-Type', '').lower()
-            is_html_response = 'text/html' in content_type and response.code == 200
+            # Permitem rescrierea și pentru coduri de eroare (ex: 403) dacă e HTML/JSON
+            is_html = 'text/html' in content_type and response.code not in [204, 304]
+            is_json = 'application/json' in content_type and response.code not in [204, 304]
             
-            if is_html_response and response.body:
+            if (is_html or is_json) and response.body:
                 try:
                     # Determină encoding-ul
                     encoding = 'utf-8'
@@ -2530,16 +2568,17 @@ class MultiInstanceProxyHandler(BaseHandler):
                         if charset_match:
                             encoding = charset_match.group(1)
                     
-                    html_content = response.body.decode(encoding, errors='replace')
+                    content = response.body.decode(encoding, errors='replace')
                     
-                    # Rescrie URL-urile în HTML
+                    # Rescrie URL-urile
                     proxy_base_url = f"{self.request.protocol}://{self.request.host}"
-                    html_content = self._rewrite_urls_in_html(html_content, comfy_url, proxy_base_url)
+                    content = self._rewrite_urls(content, comfy_url, proxy_base_url)
                     
-                    # Injectează UI-ul nostru
-                    html_content = self._inject_ui(html_content, username)
+                    # Injectează UI-ul nostru doar în HTML (doar pe succes)
+                    if is_html and response.code == 200:
+                        content = self._inject_ui(content, username)
                     
-                    self.write(html_content.encode(encoding))
+                    self.write(content.encode(encoding))
                 except Exception as e:
                     log.error(f"Error modifying HTML: {str(e)}", exc_info=True)
                     self.write(response.body)
@@ -2845,12 +2884,51 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
             
             log.info(f"WebSocket connecting with session in URL: {comfy_ws_url_with_params}")
             
-            # Conectează-te la WebSocket-ul destinație
+            # Pregătește headerele pentru WebSocket
+            ws_headers = {}
+            for h in ['User-Agent', 'Accept-Language', 'Cookie']:
+                if h in self.request.headers:
+                    ws_headers[h] = self.request.headers[h]
+
+            # Adaugă Referer rewriten pentru WebSocket
+            if 'Referer' in self.request.headers:
+                ref_parsed = urlparse(self.request.headers['Referer'])
+                ref_path = ref_parsed.path
+                if ref_path.startswith('/comfy/'):
+                    ref_path = ref_path[6:]
+                elif ref_path == '/comfy':
+                    ref_path = '/'
+
+                ws_headers['Referer'] = urlunparse((
+                    'http' if parsed_url.scheme == 'ws' else 'https',
+                    parsed_url.netloc,
+                    ref_path,
+                    ref_parsed.params,
+                    ref_parsed.query,
+                    ref_parsed.fragment
+                ))
+
+            ws_headers['Host'] = parsed_url.netloc
+            ws_headers['Origin'] = f"{'https' if parsed_url.scheme == 'wss' else 'http'}://{parsed_url.netloc}"
+            ws_headers['Sec-Fetch-Site'] = 'same-origin'
+
+            # Forward client IP
+            ws_headers['X-Forwarded-For'] = self.request.headers.get("X-Forwarded-For", self.request.remote_ip)
+            ws_headers['X-Real-IP'] = self.request.headers.get("X-Real-IP", self.request.remote_ip)
+
+            # Conectează-te la WebSocket-ul destinație folosind HTTPRequest pentru a include headerele
+            request = tornado.httpclient.HTTPRequest(
+                url=comfy_ws_url_with_params,
+                headers=ws_headers,
+                connect_timeout=60,
+                request_timeout=600,
+                validate_cert=False
+            )
+
             self.comfy_ws = await tornado.websocket.websocket_connect(
-                comfy_ws_url_with_params,
-                ping_interval=30,
-                ping_timeout=10,
-                connect_timeout=30,
+                request,
+                ping_interval=20,
+                ping_timeout=30,
                 max_message_size=500 * 1024 * 1024  # 500MB pentru fișiere mari
             )
             
@@ -2910,14 +2988,25 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
         log.info(f"WebSocket closed for user {self.username}")
     
     async def _keep_alive(self):
-        """Trimite ping-uri pentru a menține conexiunea vie"""
+        """Trimite ping-uri pentru a menține conexiunea vie (beat la 20s pentru a preveni timeout Nginx)"""
         while self._running:
-            await asyncio.sleep(30)
-            if self._running and self.comfy_ws:
+            await asyncio.sleep(20)
+            if not self._running:
+                break
+
+            # Ping backend (ComfyUI)
+            if self.comfy_ws:
                 try:
-                    await self.comfy_ws.write_message(b'', binary=True)
+                    self.comfy_ws.ping(b'ping')
                 except:
                     pass
+
+            # Ping client (browser via Nginx)
+            try:
+                if self.ws_connection and not self.ws_connection.is_closing():
+                    self.ping(b'ping')
+            except:
+                pass
 
 # === SIMPLE PROXY FOR STATIC FILES ===
 class StaticFileProxyHandler(BaseHandler):
@@ -3065,8 +3154,9 @@ def make_auth_app():
     serve_traceback=False,
     cookie_secret=config["cookie_secret"],
     login_url="/login",
-    websocket_ping_interval=30,
-    websocket_ping_timeout=10
+    websocket_ping_interval=20,
+    websocket_ping_timeout=30,
+    websocket_max_message_size=500 * 1024 * 1024
     )
 
 def make_admin_app():
