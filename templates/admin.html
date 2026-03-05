@@ -120,7 +120,8 @@
         .chat-message-time-admin { font-size: 10px; opacity: 0.7; margin-top: 2px; }
         .chat-input-admin { display: flex; gap: 10px; }
         .chat-input-admin input { flex: 1; }
-        .unread-badge { background: #dc3545; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+        .unread-badge { background: #dc3545; color: white; border-radius: 50%; width: 18px; height: 18px; font-size: 11px; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+        .status-unread-badge { background: #dc3545; color: white; border-radius: 50%; padding: 2px 6px; font-size: 11px; font-weight: bold; margin-left: 10px; }
         
         /* About Modal Styles for Admin */
         .admin-about-modal { 
@@ -293,65 +294,6 @@
 <body>
     <div class="save-notification" id="saveNotification">Changes saved successfully!</div>
     
-    <!-- About Modal for Admin -->
-    <div id="aboutModal" class="admin-about-modal">
-        <div class="admin-about-modal-content">
-            <h2>ComfyUI Auth Server v0.4.0</h2>
-            <p><strong>Advanced management and authentication system for multiple ComfyUI instances</strong></p>
-            
-            <h3>Key Features and Advantages:</h3>
-            <ul style="text-align: left; margin: 20px 0;">
-                <li><strong>Multi-User Architecture</strong> - Simultaneous management of multiple users with separate instances</li>
-                <li><strong>Intelligent Load Balancing</strong> - Automatic workload distribution between ComfyUI instances</li>
-                <li><strong>Enhanced Security</strong> - Rate limiting, bcrypt password hashing, customizable session timeouts</li>
-                <li><strong>Advanced Admin Interface</strong> - Real-time monitoring, session management, full control</li>
-                <li><strong>Integrated Chat System</strong> - Direct communication between users and administrators</li>
-                <li><strong>Personalized Workflow Browser</strong> - Each user has their own workspace for workflows</li>
-                <li><strong>Session Management</strong> - Customizable timeout, expiry notifications, session renewal</li>
-                <li><strong>Performance Monitoring</strong> - Real-time instance status, maximum capacity alerts</li>
-                <li><strong>Backup & Restore</strong> - Automatic configuration saving, easy recovery</li>
-                <li><strong>Scalability</strong> - Easy addition of new users and resources</li>
-                <li><strong>Nginx Reverse Proxy Support</strong> - Full support for nginx with Basic Authentication</li>
-            </ul>
-
-            <h3>Security Features:</h3>
-            <ul style="text-align: left; margin: 15px 0;">
-                <li>Authentication with hashed passwords (bcrypt)</li>
-                <li>Protection against brute-force attacks</li>
-                <li>Configurable session timeout per user</li>
-                <li>Temporary user blocking for security</li>
-                <li>Suspicious IP monitoring</li>
-                <li>Nginx Basic Auth support (per user or global)</li>
-            </ul>
-
-            <h3>For Administrators:</h3>
-            <ul style="text-align: left; margin: 15px 0;">
-                <li>Real-time statistics dashboard</li>
-                <li>Complete user management</li>
-                <li>Flexible instance configuration</li>
-                <li>Chat system with users</li>
-                <li>Active session control</li>
-                <li>Workflow directory configuration</li>
-                <li>Nginx authentication configuration per user</li>
-            </ul>
-
-            <div style="background: #2a2a2a; border-left: 4px solid #007bff; padding: 15px; margin: 20px 0;">
-                <h4>Main Benefits:</h4>
-                <p><strong>Resource Optimization</strong> - Balanced distribution of computing load<br>
-                <strong>User Isolation</strong> - Each user works in a secure space<br>
-                <strong>Easy Management</strong> - Single interface for all instances<br>
-                <strong>Scalability</strong> - Always add new users and resources<br>
-                <strong>Nginx Integration</strong> - Works seamlessly with nginx reverse proxies</p>
-            </div>
-
-            <p><strong>Version:</strong> 0.4.0 - Report issues through the chat system to administrators</p>
-            
-            <p><em>Version 0.4.0 - With nginx reverse proxy support<br>
-            Report any issues or improvement suggestions through the chat system!</em></p>
-            
-            <button class="admin-about-close-btn" onclick="closeAboutModal()">Understood</button>
-        </div>
-    </div>
 
     <!-- Edit User Modal -->
     <div id="editUserModal" class="edit-modal">
@@ -418,7 +360,6 @@
         <div class="header">
             <h1>ComfyUI Admin Dashboard</h1>
             <div>
-                <button class="about-btn" onclick="openAboutModal()" style="background: #007bff; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; margin-right: 10px; font-size: 16px; width: 40px; height: 40px;">?</button>
                 <button class="logout-btn" onclick="adminLogout()">Logout</button>
             </div>
         </div>
@@ -649,14 +590,6 @@
             }, 3000);
         }
 
-        function openAboutModal() {
-            document.getElementById('aboutModal').style.display = 'block';
-        }
-
-        function closeAboutModal() {
-            document.getElementById('aboutModal').style.display = 'none';
-        }
-
         function openEditModal(username, userData) {
             document.getElementById('editOriginalUsername').value = username;
             document.getElementById('editUsername').value = username;
@@ -682,11 +615,7 @@
 
         // Close modal when clicking outside
         window.onclick = function(event) {
-            const modal = document.getElementById('aboutModal');
             const editModal = document.getElementById('editUserModal');
-            if (event.target == modal) {
-                closeAboutModal();
-            }
             if (event.target == editModal) {
                 closeEditModal();
             }
@@ -750,8 +679,14 @@
                 const nginxBadge = userData.nginx_auth && userData.nginx_auth.enabled ? 
                     '<span class="nginx-badge">nginx auth</span>' : '';
                 
+                const unreadBadge = userData.unread_count > 0 ?
+                    `<span class="status-unread-badge">${userData.unread_count} new messages</span>` : '';
+
                 card.innerHTML = `
-                    <h3>${username} ${nginxBadge}</h3>
+                    <h3 style="display: flex; align-items: center; justify-content: space-between;">
+                        <span>${username} ${nginxBadge}</span>
+                        ${unreadBadge}
+                    </h3>
                     <p>Instances: ${userData.instances}/${userData.max_instances === 0 ? '∞' : userData.max_instances}</p>
                     <p>Session Timeout: ${timeoutText}</p>
                     <p>URL: ${userData.comfy_url}</p>
