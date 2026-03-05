@@ -1493,7 +1493,7 @@ class AdminLogoutHandler(BaseHandler):
             if session_id in admin_sessions:
                 del admin_sessions[session_id]
                 log.info("Admin logged out")
-        self.clear_cookie("admin_session_id", path="/")
+        self.clear_cookie("admin_session_id")
 
 # === HANDLERE PENTRU ADMIN INTERFACE ===
 class AdminHandler(BaseHandler):
