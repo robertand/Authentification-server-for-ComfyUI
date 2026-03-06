@@ -737,7 +737,7 @@
 .about-drawer {
     position: fixed;
     top: 0;
-    right: -600px;
+    right: -610px;
     width: 600px;
     max-width: 100%;
     height: 100%;
@@ -749,7 +749,7 @@
     box-shadow: -5px 0 25px rgba(0,0,0,0.5);
     overflow-y: auto;
     border-left: 1px solid rgba(255, 255, 255, 0.1);
-    display: none !important;
+    visibility: hidden;
 }
 
 .about-glass-card {
@@ -761,7 +761,7 @@
 }
 
 .about-drawer.open {
-    display: block !important;
+    visibility: visible;
     right: 0 !important;
 }
 
