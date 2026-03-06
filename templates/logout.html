@@ -63,4 +63,27 @@
     </div>
     {% raw about_modal %}
     <script src="/static/js/main.js"></script>
+    <script>
+        // "Hard" logout: clear all client-side storage
+        try {
+            localStorage.clear();
+            sessionStorage.clear();
+
+            // Attempt to clear cookies via JS as well
+            const cookies = document.cookie.split(";");
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i];
+                const eqPos = cookie.indexOf("=");
+                const name = eqPos > -1 ? cookie.substring(0, eqPos).trim() : cookie.trim();
+
+                // Clear for multiple possible paths
+                document.cookie = name + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+                document.cookie = name + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/comfy/";
+                document.cookie = name + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/comfy";
+            }
+            console.log("Client-side storage cleared for a hard logout.");
+        } catch (e) {
+            console.error("Error clearing client-side storage:", e);
+        }
+    </script>
 </body></html>
