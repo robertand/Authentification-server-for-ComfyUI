@@ -654,6 +654,10 @@ class BaseHandler(tornado.web.RequestHandler):
     
     def prepare(self):
         set_security_headers(self)
+        # Prevent caching of dynamic authenticated content
+        self.set_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.set_header("Pragma", "no-cache")
+        self.set_header("Expires", "0")
 
     def get_client_ip(self):
         # Prioritize X-Forwarded-For as it's standard for multiple proxies
@@ -723,7 +727,7 @@ class LoginHandler(BaseHandler):
                 
             if can_user_login(user):
                 session_id = create_session(user)
-                self.set_secure_cookie("session_id", session_id, expires_days=1)
+                self.set_secure_cookie("session_id", session_id, expires_days=1, path="/")
                 
                 RateLimiter.clear_attempts(client_ip)
                 
@@ -835,7 +839,9 @@ class LogoutHandler(BaseHandler):
                 del sessions[session_id]
                 log.info(f"User {username} logged out")
         
-        self.clear_cookie("session_id")
+        # "Hard" logout: clear session cookie for the standard path
+        # Extra paths are handled by JavaScript in logout.html to ensure clean state
+        self.clear_cookie("session_id", path="/")
         self.render("logout.html", about_modal=ABOUT_DRAWER_HTML)
 
 # === WORKFLOW HANDLERS ===
@@ -1379,7 +1385,7 @@ class SessionCheckHandler(BaseHandler):
                     if username in USERS:
                         USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
                     del sessions[session_id.decode()]
-                    self.clear_cookie("session_id")
+                    self.clear_cookie("session_id", path="/")
                     self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
                     return
             
@@ -1493,7 +1499,7 @@ class AdminLogoutHandler(BaseHandler):
             if session_id in admin_sessions:
                 del admin_sessions[session_id]
                 log.info("Admin logged out")
-        self.clear_cookie("admin_session_id")
+        self.clear_cookie("admin_session_id", path="/")
 
 # === HANDLERE PENTRU ADMIN INTERFACE ===
 class AdminHandler(BaseHandler):
@@ -2355,7 +2361,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                         if username in USERS:
                             USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
                         del sessions[session_id.decode()]
-                        self.clear_cookie("session_id")
+                        self.clear_cookie("session_id", path="/")
                         self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
                         return
         
