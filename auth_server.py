@@ -2555,7 +2555,8 @@ class MultiInstanceProxyHandler(BaseHandler):
                     if header_lower == 'location':
                         location = value
                         if location.startswith(comfy_url):
-                            location = location.replace(comfy_url, f"{self.request.protocol}://{self.request.host}/comfy")
+                            host = self.request.headers.get("X-Forwarded-Host", self.request.host)
+                            location = location.replace(comfy_url, f"{self.request.protocol}://{host}/comfy")
                         self.set_header(header, location)
                     elif header_lower.startswith('access-control-allow-'):
                         # Păstrăm headerul de CORS de la upstream
@@ -2590,8 +2591,9 @@ class MultiInstanceProxyHandler(BaseHandler):
                     
                     content = response.body.decode(encoding, errors='replace')
                     
-                    # Rescrie URL-urile
-                    proxy_base_url = f"{self.request.protocol}://{self.request.host}"
+                    # Rescrie URL-urile - suportă X-Forwarded-Host pentru aggregator
+                    host = self.request.headers.get("X-Forwarded-Host", self.request.host)
+                    proxy_base_url = f"{self.request.protocol}://{host}"
                     content = self._rewrite_urls(content, comfy_url, proxy_base_url)
                     
                     # Injectează UI-ul nostru doar în HTML (doar pe succes)

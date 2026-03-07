@@ -93,9 +93,7 @@
                         '</div>';
 
                     item.onclick = function() {
-                        let baseUrl = user.server_url;
-                        if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
-                        window.location.href = baseUrl + '/login?username=' + encodeURIComponent(user.username);
+                        window.location.href = '/login?username=' + encodeURIComponent(user.username) + '&server_url=' + encodeURIComponent(user.server_url);
                     };
 
                     grid.appendChild(item);
