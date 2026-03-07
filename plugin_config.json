@@ -1,0 +1,10 @@
+{
+    "plugin_name": "PRO AI Multi-Server Aggregator",
+    "port": 8200,
+    "servers": [
+        {
+            "url": "http://localhost:7861",
+            "display_name": "Server Principal"
+        }
+    ]
+}

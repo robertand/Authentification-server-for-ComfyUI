@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html><head><title>{{ plugin_name }}</title><meta charset="utf-8">
+<link rel="stylesheet" type="text/css" href="/static/css/styles.css">
+<link rel="stylesheet" type="text/css" href="/static/css/login.css">
+<style>
+    .server-badge {
+        background: #007bff;
+        color: white;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 10px;
+        margin-top: 5px;
+        display: inline-block;
+    }
+    .plugin-header {
+        text-align: center;
+        margin-bottom: 40px;
+    }
+    .user-status-item {
+        cursor: pointer;
+        transition: transform 0.2s, background 0.2s;
+    }
+    .user-status-item:hover {
+        transform: translateY(-5px);
+        background: #3a3a3a;
+    }
+</style>
+</head>
+<body>
+    <div class="container">
+        <div class="plugin-header">
+            <div class="login-title">{{ plugin_name }}</div>
+            <div class="login-subtitle">AGREGATOR MULTI-SERVER</div>
+        </div>
+
+        <div class="user-status-container">
+            <div class="user-status-title">Toți Utilizatorii Disponibili</div>
+            <div class="user-status-grid" id="aggregatedUserGrid">
+                <!-- Useri vor fi încărcați aici -->
+                <div style="grid-column: 1/-1; text-align: center; padding: 20px;">Se încarcă utilizatorii...</div>
+            </div>
+        </div>
+
+        <div style="margin-top: 30px; text-align: center; opacity: 0.6; font-size: 12px;">
+            <p>Faceți click pe un utilizator pentru a vă conecta la serverul corespunzător.</p>
+        </div>
+    </div>
+
+    <script>
+    function loadAggregatedStatus() {
+        fetch('/api/status')
+            .then(response => response.json())
+            .then(data => {
+                const grid = document.getElementById('aggregatedUserGrid');
+                if (data.users.length === 0) {
+                    grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 20px;">Niciun utilizator găsit sau serverele sunt offline.</div>';
+                    return;
+                }
+
+                grid.innerHTML = '';
+
+                data.users.forEach(user => {
+                    const item = document.createElement('div');
+                    let statusClass = 'user-status-offline';
+                    let statusText = 'Offline';
+
+                    if (!user.enabled) {
+                        statusClass = 'user-status-disabled';
+                        statusText = 'Disabled';
+                    } else if (user.instances > 0 && user.instances < user.max_instances) {
+                        statusClass = 'user-status-busy';
+                        statusText = user.instances + '/' + user.max_instances + ' sesiuni';
+                    } else if (user.instances >= user.max_instances && user.max_instances > 0) {
+                        statusClass = 'user-status-full';
+                        statusText = 'Full';
+                    } else if (user.instances === 0) {
+                        statusClass = 'user-status-available';
+                        statusText = 'Disponibil';
+                    }
+
+                    item.className = 'user-status-item ' + statusClass;
+
+                    const serverBadge = `<div class="server-badge">${user.server_name}</div>`;
+
+                    item.innerHTML =
+                        '<div>' +
+                            '<div class="user-status-username">' + user.username + '</div>' +
+                            '<div class="user-status-info">' + statusText + '</div>' +
+                            serverBadge +
+                        '</div>' +
+                        '<div class="user-status-info" style="text-align: right;">' +
+                            (user.ready ? 'Gata' : 'Inactiv') +
+                        '</div>';
+
+                    item.onclick = function() {
+                        let baseUrl = user.server_url;
+                        if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+                        window.location.href = baseUrl + '/login?username=' + encodeURIComponent(user.username);
+                    };
+
+                    grid.appendChild(item);
+                });
+            })
+            .catch(error => {
+                console.log('Error loading aggregated status:', error);
+                document.getElementById('aggregatedUserGrid').innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 20px; color: #ff6b6b;">Eroare la conectarea cu serverul aggregator.</div>';
+            });
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        loadAggregatedStatus();
+        setInterval(loadAggregatedStatus, 15000); // Refresh la 15 secunde
+    });
+    </script>
+</body></html>
