@@ -10,6 +10,7 @@ import tornado.web
 import tornado.websocket
 import tornado.httpclient
 import tornado.httputil
+import asyncio
 import json
 import logging
 import os
@@ -23,6 +24,11 @@ from urllib.parse import urlparse, urlunparse, quote, unquote
 # === LOGGING ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 log = logging.getLogger("AGGREGATOR")
+
+# === CONFIGURARE PROXY ===
+CHUNK_SIZE = 64 * 1024
+MAX_BUFFER_SIZE = 1024 * 1024 * 1024
+tornado.httpclient.AsyncHTTPClient.configure(None, max_buffer_size=MAX_BUFFER_SIZE, max_body_size=MAX_BUFFER_SIZE)
 
 CONFIG_FILE = "plugin_config.json"
 
@@ -87,9 +93,19 @@ class AggregatorBaseHandler(tornado.web.RequestHandler):
         if not session_id: return None
         return get_agg_session(session_id.decode())
 
+    def prepare(self):
+        # Securitate de bază și prevenire cache
+        self.set_header("X-Content-Type-Options", "nosniff")
+        self.set_header("X-XSS-Protection", "1; mode=block")
+        self.set_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.set_header("Pragma", "no-cache")
+        self.set_header("Expires", "0")
+
     def get_client_ip(self):
         forwarded_for = self.request.headers.get("X-Forwarded-For")
         if forwarded_for: return forwarded_for.split(",")[0].strip()
+        real_ip = self.request.headers.get("X-Real-IP")
+        if real_ip: return real_ip
         return self.request.remote_ip
 
 class AggregatedStatusHandler(AggregatorBaseHandler):
@@ -213,6 +229,7 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
         return 443 if self.request.protocol == "https" else 80
 
     def _rewrite_urls(self, content, backend_url, aggregator_base_url):
+        """Rescrie URL-urile absolute către aggregator. Relativ-ul rămâne neschimbat."""
         if not content: return content
         parsed_backend = urlparse(backend_url)
         backend_host = parsed_backend.netloc
@@ -230,39 +247,17 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
             internal_hosts.add(f"127.0.0.1:{backend_port}")
             internal_hosts.add(f"{local_ip}:{backend_port}")
 
-        # Identic cu auth_server.py
-        internal_routes = (
-            '/comfy/', '/static/', '/css/', '/js/', '/login', '/logout',
-            '/user-status', '/user-settings', '/chat-', '/send-message',
-            '/upload-chat', '/download-file', '/mark-messages', '/unread-messages',
-            '/chat-ws', '/health', '/check-session', '/refresh-session', '/api/workflows',
-            'http://', 'https://', 'ws://', 'wss://', 'data:', 'blob:'
-        )
-
+        # Rescriere URL-uri absolute în conținut (JSON/HTML/JS)
         for host in internal_hosts:
+            # HTTP
             pattern = fr'https?://{re.escape(host)}'
-            replacement = f'{agg_scheme}://{agg_host}/comfy' # Aggregator mapaza /comfy la backend
+            replacement = f'{agg_scheme}://{agg_host}'
             content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
+            # WS
             pattern = fr'wss?://{re.escape(host)}'
-            replacement = f'ws{"s" if agg_scheme=="https" else ""}://{agg_host}/comfy'
+            replacement = f'ws{"s" if agg_scheme=="https" else ""}://{agg_host}'
             content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
 
-        def replace_relative_url(match):
-            full_match = match.group(0)
-            prefix = match.group(1)
-            url = match.group(2)
-            suffix = match.group(3)
-            if not url or url.startswith(internal_routes): return full_match
-            new_url = f'/comfy{url}' if url.startswith('/') else f'/comfy/{url}'
-            return f'{prefix}{new_url}{suffix}'
-
-        attrs = ['src', 'href', 'action', 'data-src', 'data-href']
-        for attr in attrs:
-            content = re.sub(fr'({attr}=["\'])([^"\']*)(["\'])', replace_relative_url, content)
-
-        for host in internal_hosts:
-            content = content.replace(f'://{host}/comfy', f'://{agg_host}/comfy')
-            content = content.replace(f'://{host}', f'://{agg_host}/comfy')
         return content
 
     async def _proxy_request(self, method, path):
@@ -361,6 +356,13 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
 # === SYNCED WEBSOCKET PROXY ===
 
 class AggregatorWebSocketProxy(tornado.websocket.WebSocketHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.backend_ws = None
+        self._running = True
+
+    def check_origin(self, origin): return True
+
     async def open(self, path=None):
         sid = self.get_secure_cookie("agg_session_id")
         session = get_agg_session(sid.decode() if sid else None)
@@ -372,7 +374,7 @@ class AggregatorWebSocketProxy(tornado.websocket.WebSocketHandler):
         ws_scheme = "wss" if backend_base.startswith("https") else "ws"
         backend_netloc = urlparse(backend_base).netloc
 
-        # Includem session_id în query string pentru backend (comportament synced)
+        # Includem session_id în query string pentru backend
         uri_parts = list(urlparse(self.request.uri))
         query = uri_parts[4]
         new_query = f"{query}&session_id={session['auth_session_id']}" if query else f"session_id={session['auth_session_id']}"
@@ -402,8 +404,12 @@ class AggregatorWebSocketProxy(tornado.websocket.WebSocketHandler):
         )
 
         try:
-            self.backend_ws = await tornado.websocket.websocket_connect(request, ping_interval=20, ping_timeout=30)
-            self._running = True
+            self.backend_ws = await tornado.websocket.websocket_connect(
+                request,
+                ping_interval=20,
+                ping_timeout=30,
+                max_message_size=500 * 1024 * 1024
+            )
             asyncio.create_task(self._pipe_backend_to_client())
             asyncio.create_task(self._keep_alive())
         except Exception as e:
@@ -411,30 +417,35 @@ class AggregatorWebSocketProxy(tornado.websocket.WebSocketHandler):
             self.close()
 
     async def _pipe_backend_to_client(self):
-        while self._running:
-            try:
+        try:
+            while self._running and self.backend_ws:
                 msg = await self.backend_ws.read_message()
                 if msg is None: break
                 if self.ws_connection and not self.ws_connection.is_closing():
                     await self.write_message(msg, isinstance(msg, bytes))
-            except: break
-        self.close()
+        except Exception as e:
+            log.error(f"WS Pipe Error: {e}")
+        finally:
+            self.close()
 
     async def on_message(self, message):
-        if self._running and hasattr(self, 'backend_ws'):
+        if self._running and self.backend_ws:
             try: await self.backend_ws.write_message(message, isinstance(message, bytes))
             except: self.close()
 
     def on_close(self):
         self._running = False
-        if hasattr(self, 'backend_ws'): self.backend_ws.close()
+        if self.backend_ws:
+            try: self.backend_ws.close()
+            except: pass
 
     async def _keep_alive(self):
         while self._running:
             await asyncio.sleep(20)
             if not self._running: break
-            try: self.backend_ws.ping(b'ping')
-            except: pass
+            if self.backend_ws:
+                try: self.backend_ws.ping(b'ping')
+                except: pass
             try:
                 if self.ws_connection and not self.ws_connection.is_closing():
                     self.ping(b'ping')
@@ -496,8 +507,14 @@ def make_aggregator_app():
         (r"/(.*)", AggregatorProxyHandler),
     ],
     template_path=os.path.join(os.path.dirname(__file__), "templates"),
+    compress_response=False,
+    autoreload=False,
+    serve_traceback=False,
     cookie_secret=config["cookie_secret"],
-    login_url="/login"
+    login_url="/login",
+    websocket_ping_interval=20,
+    websocket_ping_timeout=30,
+    websocket_max_message_size=500 * 1024 * 1024
     )
 
 def make_admin_app():
