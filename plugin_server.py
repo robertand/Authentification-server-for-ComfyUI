@@ -213,12 +213,30 @@ class AggregatorLoginHandler(AggregatorBaseHandler):
             self.render("plugin_login.html", plugin_name=config["plugin_name"], username=username, server_url=server_url, error=f"Connection error: {str(e)}")
 
 class AggregatorLogoutHandler(AggregatorBaseHandler):
-    def get(self):
+    async def get(self):
         session_id = self.get_secure_cookie("agg_session_id")
         if session_id:
-            session_id = session_id.decode()
-            if session_id in AGG_SESSIONS:
-                del AGG_SESSIONS[session_id]
+            sid_str = session_id.decode()
+            session = AGG_SESSIONS.get(sid_str)
+
+            if session:
+                # Notificăm backend-ul de logout pentru a elibera instanța GPU
+                try:
+                    client = tornado.httpclient.AsyncHTTPClient()
+                    logout_url = f"{session['server_url'].rstrip('/')}/logout"
+                    req = tornado.httpclient.HTTPRequest(
+                        url=logout_url,
+                        method="GET",
+                        headers={"Cookie": f"session_id={session['auth_session_id']}"},
+                        request_timeout=5
+                    )
+                    await client.fetch(req, raise_error=False)
+                    log.info(f"Logout proxy succes pentru {session['user']} pe {session['server_url']}")
+                except Exception as e:
+                    log.error(f"Eroare la trimiterea logout către backend: {e}")
+
+                del AGG_SESSIONS[sid_str]
+
         self.clear_cookie("agg_session_id", path="/")
         self.redirect("/")
 
@@ -379,13 +397,13 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
 
             response = await client.fetch(req, raise_error=False)
 
-            # Detectare sesiune backend expirată sau redirecturi de auth
+            # Detectare sesiune backend expirată sau redirecturi de auth/logout
             if response.code == 302:
                 loc = response.headers.get("Location", "")
                 parsed_loc = urlparse(loc)
-                # Dacă backend-ul ne trimite la login (comportament tipic auth_server.py când nu ești logat)
-                if parsed_loc.path in ['/login', '/login/']:
-                    log.warning(f"Backend a respins sesiunea pentru {session['user']} (Redirect detectat: {loc}). Curățăm sesiunea locală.")
+                # Dacă backend-ul ne trimite la login sau dacă am apelat logout prin proxy
+                if parsed_loc.path in ['/login', '/login/', '/logout', '/logout/']:
+                    log.warning(f"Sesiune terminată pe backend pentru {session['user']} (Redirect detectat: {loc}). Curățăm sesiunea locală.")
                     sid = self.get_secure_cookie("agg_session_id")
                     if sid:
                         sid_str = sid.decode()
