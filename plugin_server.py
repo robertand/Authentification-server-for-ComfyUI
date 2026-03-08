@@ -136,8 +136,19 @@ class AggregatedStatusHandler(AggregatorBaseHandler):
                 except Exception as e:
                     log.error(f"Eroare la procesarea răspunsului de la {server_info['url']}: {e}")
 
+        current_session = self.get_current_user()
+        session_info = None
+        if current_session:
+            session_info = {
+                "user": current_session["user"],
+                "server_url": current_session["server_url"]
+            }
+
         self.set_header("Content-Type", "application/json")
-        self.write({"users": aggregated_users})
+        self.write({
+            "users": aggregated_users,
+            "current_session": session_info
+        })
 
 class AggregatorLoginHandler(AggregatorBaseHandler):
     def get(self):
@@ -285,16 +296,16 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
     async def _proxy_request(self, method, path):
         session = self.get_current_user()
         if not session:
-            # Comportament sincronizat cu auth_server.py: API -> 401, Browser -> Redirect
-            # path este grupul (.*) din ruta /(.*)
-            # Daca accesam /comfy/, path este "comfy/"
+            # Dacă nu suntem logați, verificăm dacă e o cerere API sau de browser
+            # path este restul URL-ului după aggregator-root/
             if path and path.startswith(('api/', 'view/', 'upload/', 'websocket')):
                 self.set_status(401)
-                self.write({"error": "Not authenticated"})
+                self.write({"error": "Sesiune aggregator inexistentă sau expirată"})
                 return
 
-            # Orice altceva care nu e rutele noastre interne (dashboard, static etc.)
-            # ar trebui să redirecționeze către dashboard pentru a alege un user
+            # Browser: redirect la dashboard. Curățăm și cookie-ul pentru siguranță.
+            if self.get_secure_cookie("agg_session_id"):
+                self.clear_cookie("agg_session_id", path="/")
             self.redirect("/")
             return
 
@@ -368,6 +379,22 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
             )
 
             response = await client.fetch(req, raise_error=False)
+
+            # Detectare sesiune backend expirată sau redirecturi de auth
+            if response.code == 302:
+                loc = response.headers.get("Location", "")
+                parsed_loc = urlparse(loc)
+                # Dacă backend-ul ne trimite la login sau la root (comportament tipic auth_server.py când nu ești logat)
+                if parsed_loc.path in ['/login', '/login/', '/', '']:
+                    log.warning(f"Backend a respins sesiunea pentru {session['user']} (Redirect detectat: {loc}). Curățăm sesiunea locală.")
+                    sid = self.get_secure_cookie("agg_session_id")
+                    if sid:
+                        sid_str = sid.decode()
+                        if sid_str in AGG_SESSIONS: del AGG_SESSIONS[sid_str]
+                    self.clear_cookie("agg_session_id", path="/")
+                    self.redirect("/")
+                    return
+
             self.set_status(response.code)
 
             for h, v in response.headers.get_all():
@@ -554,8 +581,12 @@ class AggregatorDashboardHandler(AggregatorBaseHandler):
 
 class AggregatorRootHandler(AggregatorBaseHandler):
     def get(self):
-        if not self.get_secure_cookie("agg_session_id"): self.render("plugin_index.html", plugin_name=config["plugin_name"])
-        else: self.redirect("/comfy/")
+        # Root-ul aggregatorului afișează ÎNTOTDEAUNA dashboard-ul (lista de useri)
+        # Acest lucru previne buclele de redirect infinite între / și /comfy/
+        if not self.get_current_user() and self.get_secure_cookie("agg_session_id"):
+            self.clear_cookie("agg_session_id", path="/")
+
+        self.render("plugin_index.html", plugin_name=config["plugin_name"])
 
 class AdminRootHandler(AdminBaseHandler):
     def get(self): self.redirect("/admin")
