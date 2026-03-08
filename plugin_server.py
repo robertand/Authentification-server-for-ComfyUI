@@ -204,7 +204,7 @@ class AggregatorLogoutHandler(AggregatorBaseHandler):
         self.clear_cookie("agg_session_id", path="/")
         self.redirect("/")
 
-# === ROBUST PROXY HANDLER (Synced with auth_server.py) ===
+# === ROBUST PROXY HANDLER (Full Sync with auth_server.py) ===
 
 class AggregatorProxyHandler(AggregatorBaseHandler):
     def set_default_headers(self):
@@ -229,7 +229,7 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
         return 443 if self.request.protocol == "https" else 80
 
     def _rewrite_urls(self, content, backend_url, aggregator_base_url):
-        """Rescrie URL-urile absolute către aggregator. Relativ-ul rămâne neschimbat."""
+        """Rescrie URL-urile absolute către aggregator conform logicii originale."""
         if not content: return content
         parsed_backend = urlparse(backend_url)
         backend_host = parsed_backend.netloc
@@ -247,54 +247,109 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
             internal_hosts.add(f"127.0.0.1:{backend_port}")
             internal_hosts.add(f"{local_ip}:{backend_port}")
 
-        # Rescriere URL-uri absolute în conținut (JSON/HTML/JS)
+        internal_routes = (
+            '/comfy/', '/static/', '/css/', '/js/', '/login', '/logout',
+            '/user-status', '/user-settings', '/chat-', '/send-message',
+            '/upload-chat', '/download-file', '/mark-messages', '/unread-messages',
+            '/chat-ws', '/health', '/check-session', '/refresh-session', '/api/workflows',
+            'http://', 'https://', 'ws://', 'wss://', 'data:', 'blob:'
+        )
+
         for host in internal_hosts:
-            # HTTP
             pattern = fr'https?://{re.escape(host)}'
-            replacement = f'{agg_scheme}://{agg_host}'
+            replacement = f'{agg_scheme}://{agg_host}/comfy'
             content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
-            # WS
             pattern = fr'wss?://{re.escape(host)}'
-            replacement = f'ws{"s" if agg_scheme=="https" else ""}://{agg_host}'
+            replacement = f'ws{"s" if agg_scheme=="https" else ""}://{agg_host}/comfy'
             content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
+
+        def replace_relative_url(match):
+            full_match = match.group(0)
+            prefix = match.group(1)
+            url = match.group(2)
+            suffix = match.group(3)
+            if not url or url.startswith(internal_routes): return full_match
+            new_url = f'/comfy{url}' if url.startswith('/') else f'/comfy/{url}'
+            return f'{prefix}{new_url}{suffix}'
+
+        attrs = ['src', 'href', 'action', 'data-src', 'data-href']
+        for attr in attrs:
+            content = re.sub(fr'({attr}=["\'])([^"\']*)(["\'])', replace_relative_url, content)
+
+        for host in internal_hosts:
+            content = content.replace(f'://{host}/comfy', f'://{agg_host}/comfy')
+            content = content.replace(f'://{host}', f'://{agg_host}/comfy')
 
         return content
 
     async def _proxy_request(self, method, path):
         session = self.get_current_user()
         if not session:
-            if path and path.startswith(('api/', 'view/', 'upload/', 'websocket', 'comfy/')):
+            # Comportament sincronizat cu auth_server.py: API -> 401, Browser -> Redirect
+            # path este grupul (.*) din ruta /(.*)
+            # Daca accesam /comfy/, path este "comfy/"
+            if path and path.startswith(('api/', 'view/', 'upload/', 'websocket')):
                 self.set_status(401)
+                self.write({"error": "Not authenticated"})
                 return
+
+            # Orice altceva care nu e rutele noastre interne (dashboard, static etc.)
+            # ar trebui să redirecționeze către dashboard pentru a alege un user
             self.redirect("/")
             return
 
         backend_base = session["server_url"].rstrip('/')
+
+        # Logica de path din auth_server.py: folosim URI-ul brut
         raw_uri = self.request.uri
-        target_url = f"{backend_base}{raw_uri}"
+        if raw_uri.startswith('/comfy/'):
+            proxy_path = raw_uri[7:]
+        elif raw_uri == '/comfy':
+            proxy_path = ''
+        elif raw_uri.startswith('/'):
+            proxy_path = raw_uri[1:]
+        else:
+            proxy_path = raw_uri
+
+        target_url = f"{backend_base}/{proxy_path}"
 
         log.info(f"Aggregator Proxy: {method} {raw_uri} -> {target_url}")
         client = tornado.httpclient.AsyncHTTPClient()
 
         try:
             headers = {}
-            exclude = ['host', 'content-length', 'connection', 'keep-alive', 'accept-encoding', 'content-encoding', 'transfer-encoding', 'cookie']
+            exclude = ['host', 'content-length', 'connection', 'keep-alive', 'accept-encoding', 'content-encoding', 'transfer-encoding']
             for h, v in self.request.headers.items():
                 if h.lower() not in exclude: headers[h] = v
 
             headers['Host'] = urlparse(target_url).netloc
-            headers['Cookie'] = f"session_id={session['auth_session_id']}"
+
+            # Gestionare Cookie: pastram cookie-urile browserului dar injectam session_id-ul de backend
+            if 'Cookie' in headers:
+                cookies = headers['Cookie'].split('; ')
+                # Scoatem eventualele session_id vechi din backend daca existau direct
+                filtered = [c for c in cookies if not c.startswith('session_id=')]
+                # Injectam session_id-ul corect pentru acest server backend
+                filtered.append(f"session_id={session['auth_session_id']}")
+                headers['Cookie'] = '; '.join(filtered)
+            else:
+                headers['Cookie'] = f"session_id={session['auth_session_id']}"
+
             headers['X-Forwarded-For'] = self.get_client_ip()
             headers['X-Forwarded-Proto'] = self.request.protocol
             headers['X-Forwarded-Host'] = self.request.host
+            headers['X-User-ID'] = session['user']
+            headers['X-Session-ID'] = session['auth_session_id']
             headers['Sec-Fetch-Site'] = 'same-origin'
 
-            # Spoof Origin/Referer
             if 'Origin' in self.request.headers:
                 headers['Origin'] = f"{urlparse(backend_base).scheme}://{headers['Host']}"
             if 'Referer' in self.request.headers:
                 ref_parsed = urlparse(self.request.headers['Referer'])
-                headers['Referer'] = urlunparse((urlparse(backend_base).scheme, headers['Host'], ref_parsed.path, ref_parsed.params, ref_parsed.query, ref_parsed.fragment))
+                # Rescriem Referer pentru a parea ca vine de la backend
+                ref_path = ref_parsed.path
+                if ref_path.startswith('/comfy/'): ref_path = ref_path[6:]
+                headers['Referer'] = urlunparse((urlparse(backend_base).scheme, headers['Host'], ref_path, ref_parsed.params, ref_parsed.query, ref_parsed.fragment))
 
             streaming_callback = self._stream_response if int(self.request.headers.get('Content-Length', 0)) > 10*1024*1024 else None
 
@@ -319,10 +374,12 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
                 hl = h.lower()
                 if hl not in ['content-length', 'content-encoding', 'transfer-encoding', 'connection', 'keep-alive', 'content-security-policy']:
                     if hl == 'location' and v.startswith(backend_base):
-                        v = v.replace(backend_base, f"{self.request.protocol}://{self.request.host}")
+                        v = v.replace(backend_base, f"{self.request.protocol}://{self.request.host}/comfy")
                     self.set_header(h, v)
 
             if "Access-Control-Allow-Origin" not in self._headers: self.set_header("Access-Control-Allow-Origin", "*")
+            if "Access-Control-Allow-Credentials" not in self._headers: self.set_header("Access-Control-Allow-Credentials", "true")
+
             if streaming_callback: return
 
             content_type = response.headers.get('Content-Type', '').lower()
@@ -391,7 +448,16 @@ class AggregatorWebSocketProxy(tornado.websocket.WebSocketHandler):
 
         ws_headers['Host'] = backend_netloc
         ws_headers['Origin'] = f"{'https' if ws_scheme == 'wss' else 'http'}://{backend_netloc}"
-        ws_headers['Cookie'] = f"session_id={session['auth_session_id']}"
+
+        # Cookie sync identic cu HTTP proxy
+        if 'Cookie' in ws_headers:
+            cookies = ws_headers['Cookie'].split('; ')
+            filtered = [c for c in cookies if not c.startswith('session_id=')]
+            filtered.append(f"session_id={session['auth_session_id']}")
+            ws_headers['Cookie'] = '; '.join(filtered)
+        else:
+            ws_headers['Cookie'] = f"session_id={session['auth_session_id']}"
+
         ws_headers['X-Forwarded-For'] = self.request.headers.get("X-Forwarded-For", self.request.remote_ip)
         ws_headers['X-Forwarded-Host'] = self.request.host
 
