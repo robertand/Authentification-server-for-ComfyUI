@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Plugin Server pentru ComfyUI - Aggregator & Full Proxy
+Plugin Server pentru ComfyUI - Aggregator & High-Performance Proxy (Synced with Auth Server)
 Colectează userii de la mai multe servere de autentificare și routează tot traficul prin acest server.
+Folosește aceeași logică robustă de proxy ca și serverul de autentificare original.
 """
 
 import tornado.ioloop
@@ -15,8 +16,9 @@ import os
 import time
 import uuid
 import re
+import socket
 import base64
-from urllib.parse import urlparse, urlunparse, quote
+from urllib.parse import urlparse, urlunparse, quote, unquote
 
 # === LOGGING ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -35,6 +37,8 @@ def load_config():
                 if "admin_port" not in conf: conf["admin_port"] = 8201
                 if "cookie_secret" not in conf:
                     conf["cookie_secret"] = base64.b64encode(os.urandom(32)).decode()
+                if "admin_password" not in conf:
+                    conf["admin_password"] = "admin"
                 return conf
         except Exception as e:
             log.error(f"Eroare la încărcarea configurației: {e}")
@@ -56,15 +60,24 @@ def save_config(conf):
         log.error(f"Eroare la salvarea configurației: {e}")
 
 config = load_config()
-save_config(config) # Salvează pentru a asigura secretele
+save_config(config)
 
 # === SESSION STORAGE ===
-# agg_session_id -> { "user": username, "server_url": url, "auth_session_id": sid, "created": time }
 AGG_SESSIONS = {}
 
 def get_agg_session(session_id):
     if not session_id: return None
     return AGG_SESSIONS.get(session_id)
+
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "127.0.0.1"
 
 # === HANDLERE AGGREGATOR ===
 
@@ -125,7 +138,6 @@ class AggregatorLoginHandler(AggregatorBaseHandler):
             self.render("plugin_login.html", plugin_name=config["plugin_name"], username=username, server_url=server_url, error="Server URL is missing")
             return
 
-        # Încercăm login pe serverul de backend
         client = tornado.httpclient.AsyncHTTPClient()
         body = f"username={quote(username)}&password={quote(password)}"
 
@@ -139,21 +151,17 @@ class AggregatorLoginHandler(AggregatorBaseHandler):
             )
             response = await client.fetch(req, raise_error=False)
 
-            # Verificăm dacă am primit cookie-ul de sesiune
             auth_session_id = None
             if "Set-Cookie" in response.headers:
-                # Căutăm session_id în cookie-uri
                 cookies = response.headers.get_list("Set-Cookie")
                 for cookie in cookies:
                     if "session_id=" in cookie:
-                        # Extragem valoarea cookie-ului (fără atributele secure, path etc.)
                         match = re.search(r'session_id=([^;]+)', cookie)
                         if match:
                             auth_session_id = match.group(1)
                             break
 
             if response.code in [302, 200] and auth_session_id:
-                # Login succes
                 agg_sid = str(uuid.uuid4())
                 AGG_SESSIONS[agg_sid] = {
                     "user": username,
@@ -180,71 +188,177 @@ class AggregatorLogoutHandler(AggregatorBaseHandler):
         self.clear_cookie("agg_session_id", path="/")
         self.redirect("/")
 
+# === ROBUST PROXY HANDLER (Synced with auth_server.py) ===
+
 class AggregatorProxyHandler(AggregatorBaseHandler):
-    async def _proxy(self, method, path):
+    def set_default_headers(self):
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with, content-type, authorization, x-forwarded-for, x-real-ip, x-forwarded-proto, x-forwarded-host, cookie")
+        self.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD")
+        self.set_header("Access-Control-Allow-Credentials", "true")
+
+    async def options(self, path=None): await self._proxy_request("OPTIONS", path or "")
+    async def get(self, path=None): await self._proxy_request("GET", path or "")
+    async def post(self, path=None): await self._proxy_request("POST", path or "")
+    async def put(self, path=None): await self._proxy_request("PUT", path or "")
+    async def delete(self, path=None): await self._proxy_request("DELETE", path or "")
+    async def head(self, path=None): await self._proxy_request("HEAD", path or "")
+    async def patch(self, path=None): await self._proxy_request("PATCH", path or "")
+
+    def _get_port_from_host(self):
+        host = self.request.headers.get("Host", "")
+        if ":" in host:
+            try: return int(host.split(":")[1])
+            except: pass
+        return 443 if self.request.protocol == "https" else 80
+
+    def _rewrite_urls(self, content, backend_url, aggregator_base_url):
+        if not content: return content
+        parsed_backend = urlparse(backend_url)
+        backend_host = parsed_backend.netloc
+        backend_scheme = parsed_backend.scheme
+        backend_port = parsed_backend.port
+
+        parsed_agg = urlparse(aggregator_base_url)
+        agg_host = parsed_agg.netloc
+        agg_scheme = parsed_agg.scheme
+
+        local_ip = get_local_ip()
+        internal_hosts = {backend_host, "localhost", "127.0.0.1", local_ip}
+        if backend_port:
+            internal_hosts.add(f"localhost:{backend_port}")
+            internal_hosts.add(f"127.0.0.1:{backend_port}")
+            internal_hosts.add(f"{local_ip}:{backend_port}")
+
+        # Identic cu auth_server.py
+        internal_routes = (
+            '/comfy/', '/static/', '/css/', '/js/', '/login', '/logout',
+            '/user-status', '/user-settings', '/chat-', '/send-message',
+            '/upload-chat', '/download-file', '/mark-messages', '/unread-messages',
+            '/chat-ws', '/health', '/check-session', '/refresh-session', '/api/workflows',
+            'http://', 'https://', 'ws://', 'wss://', 'data:', 'blob:'
+        )
+
+        for host in internal_hosts:
+            pattern = fr'https?://{re.escape(host)}'
+            replacement = f'{agg_scheme}://{agg_host}/comfy' # Aggregator mapaza /comfy la backend
+            content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
+            pattern = fr'wss?://{re.escape(host)}'
+            replacement = f'ws{"s" if agg_scheme=="https" else ""}://{agg_host}/comfy'
+            content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
+
+        def replace_relative_url(match):
+            full_match = match.group(0)
+            prefix = match.group(1)
+            url = match.group(2)
+            suffix = match.group(3)
+            if not url or url.startswith(internal_routes): return full_match
+            new_url = f'/comfy{url}' if url.startswith('/') else f'/comfy/{url}'
+            return f'{prefix}{new_url}{suffix}'
+
+        attrs = ['src', 'href', 'action', 'data-src', 'data-href']
+        for attr in attrs:
+            content = re.sub(fr'({attr}=["\'])([^"\']*)(["\'])', replace_relative_url, content)
+
+        for host in internal_hosts:
+            content = content.replace(f'://{host}/comfy', f'://{agg_host}/comfy')
+            content = content.replace(f'://{host}', f'://{agg_host}/comfy')
+        return content
+
+    async def _proxy_request(self, method, path):
         session = self.get_current_user()
         if not session:
-            # Dacă e o cerere de API, dăm 401, altfel redirect la login
-            if path.startswith('api/') or path.startswith('comfy/'):
+            if path and path.startswith(('api/', 'view/', 'upload/', 'websocket', 'comfy/')):
                 self.set_status(401)
                 return
             self.redirect("/")
             return
 
-        target_base = session["server_url"].rstrip('/')
-        # Construim path-ul corect. Dacă path-ul original începe cu /comfy/, îl păstrăm.
-        # Serverul original se așteaptă la rute ca /comfy/... sau /check-session etc.
-        uri = self.request.uri
-        target_url = f"{target_base}{uri}"
+        backend_base = session["server_url"].rstrip('/')
+        raw_uri = self.request.uri
+        target_url = f"{backend_base}{raw_uri}"
 
+        log.info(f"Aggregator Proxy: {method} {raw_uri} -> {target_url}")
         client = tornado.httpclient.AsyncHTTPClient()
-        headers = dict(self.request.headers)
-
-        # Setează cookie-ul de backend
-        headers["Cookie"] = f"session_id={session['auth_session_id']}"
-        # Setează host-ul corect
-        parsed_target = urlparse(target_url)
-        headers["Host"] = parsed_target.netloc
-        headers["X-Forwarded-Host"] = self.request.host
 
         try:
+            headers = {}
+            exclude = ['host', 'content-length', 'connection', 'keep-alive', 'accept-encoding', 'content-encoding', 'transfer-encoding', 'cookie']
+            for h, v in self.request.headers.items():
+                if h.lower() not in exclude: headers[h] = v
+
+            headers['Host'] = urlparse(target_url).netloc
+            headers['Cookie'] = f"session_id={session['auth_session_id']}"
+            headers['X-Forwarded-For'] = self.get_client_ip()
+            headers['X-Forwarded-Proto'] = self.request.protocol
+            headers['X-Forwarded-Host'] = self.request.host
+            headers['Sec-Fetch-Site'] = 'same-origin'
+
+            # Spoof Origin/Referer
+            if 'Origin' in self.request.headers:
+                headers['Origin'] = f"{urlparse(backend_base).scheme}://{headers['Host']}"
+            if 'Referer' in self.request.headers:
+                ref_parsed = urlparse(self.request.headers['Referer'])
+                headers['Referer'] = urlunparse((urlparse(backend_base).scheme, headers['Host'], ref_parsed.path, ref_parsed.params, ref_parsed.query, ref_parsed.fragment))
+
+            streaming_callback = self._stream_response if int(self.request.headers.get('Content-Length', 0)) > 10*1024*1024 else None
+
             req = tornado.httpclient.HTTPRequest(
                 url=target_url,
                 method=method,
                 headers=headers,
-                body=self.request.body if method in ["POST", "PUT", "PATCH"] else None,
+                body=self.request.body if method in ["POST", "PUT", "DELETE", "PATCH"] else None,
                 follow_redirects=False,
+                connect_timeout=30,
                 request_timeout=300,
+                validate_cert=False,
                 decompress_response=True,
-                validate_cert=False
+                allow_nonstandard_methods=True,
+                streaming_callback=streaming_callback
             )
 
             response = await client.fetch(req, raise_error=False)
             self.set_status(response.code)
 
-            for header, value in response.headers.get_all():
-                if header.lower() not in ['content-length', 'content-encoding', 'transfer-encoding', 'connection']:
-                    if header.lower() == 'location':
-                        # Rescriem locația dacă e absolută către backend
-                        if value.startswith(target_base):
-                            value = value.replace(target_base, f"{self.request.protocol}://{self.request.host}")
-                        self.set_header(header, value)
-                    else:
-                        self.set_header(header, value)
+            for h, v in response.headers.get_all():
+                hl = h.lower()
+                if hl not in ['content-length', 'content-encoding', 'transfer-encoding', 'connection', 'keep-alive', 'content-security-policy']:
+                    if hl == 'location' and v.startswith(backend_base):
+                        v = v.replace(backend_base, f"{self.request.protocol}://{self.request.host}")
+                    self.set_header(h, v)
 
-            if response.body:
+            if "Access-Control-Allow-Origin" not in self._headers: self.set_header("Access-Control-Allow-Origin", "*")
+            if streaming_callback: return
+
+            content_type = response.headers.get('Content-Type', '').lower()
+            is_html = 'text/html' in content_type and response.code not in [204, 304]
+            is_json = 'application/json' in content_type and response.code not in [204, 304]
+
+            if (is_html or is_json) and response.body:
+                encoding = 'utf-8'
+                if 'charset=' in content_type:
+                    m = re.search(r'charset=([\w-]+)', content_type, re.IGNORECASE)
+                    if m: encoding = m.group(1)
+
+                content = response.body.decode(encoding, errors='replace')
+                agg_base_url = f"{self.request.protocol}://{self.request.host}"
+                content = self._rewrite_urls(content, backend_base, agg_base_url)
+                self.write(content.encode(encoding))
+            elif response.code != 304 and response.body:
                 self.write(response.body)
 
         except Exception as e:
-            log.error(f"Proxy error for {target_url}: {e}")
+            log.error(f"Aggregator Proxy Error: {e}", exc_info=True)
             self.set_status(502)
             self.write(f"Bad Gateway: {str(e)}")
 
-    async def get(self, path=None): await self._proxy("GET", path or "")
-    async def post(self, path=None): await self._proxy("POST", path or "")
-    async def put(self, path=None): await self._proxy("PUT", path or "")
-    async def delete(self, path=None): await self._proxy("DELETE", path or "")
-    async def options(self, path=None): await self._proxy("OPTIONS", path or "")
+    async def _stream_response(self, chunk):
+        try:
+            self.write(chunk)
+            await self.flush()
+        except: pass
+
+# === SYNCED WEBSOCKET PROXY ===
 
 class AggregatorWebSocketProxy(tornado.websocket.WebSocketHandler):
     async def open(self, path=None):
@@ -254,82 +368,102 @@ class AggregatorWebSocketProxy(tornado.websocket.WebSocketHandler):
             self.close(code=4001, reason="Not authenticated")
             return
 
-        target_base = session["server_url"].rstrip('/')
-        if target_base.startswith("http://"): ws_base = target_base.replace("http://", "ws://")
-        else: ws_base = target_base.replace("https://", "wss://")
+        backend_base = session["server_url"].rstrip('/')
+        ws_scheme = "wss" if backend_base.startswith("https") else "ws"
+        backend_netloc = urlparse(backend_base).netloc
 
-        uri = self.request.uri
-        self.target_url = f"{ws_base}{uri}"
+        # Includem session_id în query string pentru backend (comportament synced)
+        uri_parts = list(urlparse(self.request.uri))
+        query = uri_parts[4]
+        new_query = f"{query}&session_id={session['auth_session_id']}" if query else f"session_id={session['auth_session_id']}"
+        uri_parts[0] = ws_scheme
+        uri_parts[1] = backend_netloc
+        uri_parts[4] = new_query
 
-        headers = dict(self.request.headers)
-        headers["Cookie"] = f"session_id={session['auth_session_id']}"
-        headers["Host"] = urlparse(self.target_url).netloc
-        headers["X-Forwarded-Host"] = self.request.host
+        self.target_url = urlunparse(uri_parts)
+        log.info(f"Aggregator WS connecting: {self.target_url}")
+
+        ws_headers = {}
+        for h in ['User-Agent', 'Accept-Language', 'Cookie']:
+            if h in self.request.headers: ws_headers[h] = self.request.headers[h]
+
+        ws_headers['Host'] = backend_netloc
+        ws_headers['Origin'] = f"{'https' if ws_scheme == 'wss' else 'http'}://{backend_netloc}"
+        ws_headers['Cookie'] = f"session_id={session['auth_session_id']}"
+        ws_headers['X-Forwarded-For'] = self.request.headers.get("X-Forwarded-For", self.request.remote_ip)
+        ws_headers['X-Forwarded-Host'] = self.request.host
 
         request = tornado.httpclient.HTTPRequest(
             url=self.target_url,
-            headers=headers,
+            headers=ws_headers,
             connect_timeout=60,
             request_timeout=600,
             validate_cert=False
         )
 
         try:
-            self.backend_ws = await tornado.websocket.websocket_connect(request)
+            self.backend_ws = await tornado.websocket.websocket_connect(request, ping_interval=20, ping_timeout=30)
+            self._running = True
             asyncio.create_task(self._pipe_backend_to_client())
+            asyncio.create_task(self._keep_alive())
         except Exception as e:
-            log.error(f"WS connect error to {self.target_url}: {e}")
+            log.error(f"Aggregator WS connect error: {e}")
             self.close()
 
     async def _pipe_backend_to_client(self):
-        while True:
+        while self._running:
             try:
                 msg = await self.backend_ws.read_message()
                 if msg is None: break
-                await self.write_message(msg, isinstance(msg, bytes))
+                if self.ws_connection and not self.ws_connection.is_closing():
+                    await self.write_message(msg, isinstance(msg, bytes))
             except: break
         self.close()
 
     async def on_message(self, message):
-        if hasattr(self, 'backend_ws'):
-            await self.backend_ws.write_message(message, isinstance(message, bytes))
+        if self._running and hasattr(self, 'backend_ws'):
+            try: await self.backend_ws.write_message(message, isinstance(message, bytes))
+            except: self.close()
 
     def on_close(self):
+        self._running = False
         if hasattr(self, 'backend_ws'): self.backend_ws.close()
+
+    async def _keep_alive(self):
+        while self._running:
+            await asyncio.sleep(20)
+            if not self._running: break
+            try: self.backend_ws.ping(b'ping')
+            except: pass
+            try:
+                if self.ws_connection and not self.ws_connection.is_closing():
+                    self.ping(b'ping')
+            except: pass
 
 # === ADMIN HANDLERE (Port 8201) ===
 
 class AdminBaseHandler(tornado.web.RequestHandler):
-    def get_current_user(self):
-        return self.get_secure_cookie("agg_admin_session")
+    def get_current_user(self): return self.get_secure_cookie("agg_admin_session")
 
 class AdminLoginHandler(AdminBaseHandler):
-    def get(self):
-        self.render("plugin_admin_login.html", error="")
+    def get(self): self.render("plugin_admin_login.html", error="")
     def post(self):
-        password = self.get_argument("password", "")
-        if password == config.get("admin_password", "admin"):
+        if self.get_argument("password", "") == config.get("admin_password", "admin"):
             self.set_secure_cookie("agg_admin_session", "logged_in")
             self.redirect("/admin")
-        else:
-            self.render("plugin_admin_login.html", error="Invalid password")
+        else: self.render("plugin_admin_login.html", error="Invalid password")
 
 class AdminMainHandler(AdminBaseHandler):
     @tornado.web.authenticated
-    def get(self):
-        self.render("plugin_admin.html", config=config)
+    def get(self): self.render("plugin_admin.html", config=config)
 
 class AdminApiServersHandler(AdminBaseHandler):
     @tornado.web.authenticated
     def post(self):
         data = json.loads(self.request.body)
-        config["servers"].append({
-            "url": data["url"],
-            "display_name": data["display_name"]
-        })
+        config["servers"].append({"url": data["url"], "display_name": data["display_name"]})
         save_config(config)
         self.write({"success": True})
-
     @tornado.web.authenticated
     def delete(self):
         idx = int(self.get_argument("index"))
@@ -339,15 +473,15 @@ class AdminApiServersHandler(AdminBaseHandler):
         self.write({"success": True})
 
 class AggregatorDashboardHandler(AggregatorBaseHandler):
-    def get(self):
-        self.render("plugin_index.html", plugin_name=config["plugin_name"])
+    def get(self): self.render("plugin_index.html", plugin_name=config["plugin_name"])
 
 class AggregatorRootHandler(AggregatorBaseHandler):
     def get(self):
-        if not self.get_secure_cookie("agg_session_id"):
-            self.render("plugin_index.html", plugin_name=config["plugin_name"])
-        else:
-            self.redirect("/comfy/")
+        if not self.get_secure_cookie("agg_session_id"): self.render("plugin_index.html", plugin_name=config["plugin_name"])
+        else: self.redirect("/comfy/")
+
+class AdminRootHandler(AdminBaseHandler):
+    def get(self): self.redirect("/admin")
 
 def make_aggregator_app():
     return tornado.web.Application([
@@ -366,10 +500,6 @@ def make_aggregator_app():
     login_url="/login"
     )
 
-class AdminRootHandler(AdminBaseHandler):
-    def get(self):
-        self.redirect("/admin")
-
 def make_admin_app():
     return tornado.web.Application([
         (r"/login", AdminLoginHandler),
@@ -384,16 +514,10 @@ def make_admin_app():
     )
 
 if __name__ == "__main__":
-    agg_app = make_aggregator_app()
-    admin_app = make_admin_app()
-
-    agg_port = config.get("port", 8200)
-    admin_port = config.get("admin_port", 8201)
-
+    agg_app, admin_app = make_aggregator_app(), make_admin_app()
+    agg_port, admin_port = config.get("port", 8200), config.get("admin_port", 8201)
     agg_app.listen(agg_port)
     admin_app.listen(admin_port)
-
-    log.info(f"Aggregator Server pornit pe portul {agg_port}")
+    log.info(f"Aggregator Server pornit pe portul {agg_port} (Synced High-Performance Proxy)")
     log.info(f"Aggregator Admin pornit pe portul {admin_port}")
-
     tornado.ioloop.IOLoop.current().start()

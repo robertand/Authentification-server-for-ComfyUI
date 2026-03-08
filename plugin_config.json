@@ -8,5 +8,6 @@
         }
     ],
     "admin_port": 8201,
-    "cookie_secret": "iZis1EBz89XCTjT5oGj1MxBouFHvtVoA688kDn9MJBo="
+    "cookie_secret": "iZis1EBz89XCTjT5oGj1MxBouFHvtVoA688kDn9MJBo=",
+    "admin_password": "admin"
 }
