@@ -173,6 +173,7 @@ class AggregatorLoginHandler(AggregatorBaseHandler):
                 url=f"{server_url.rstrip('/')}/login",
                 method="POST",
                 body=body,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
                 follow_redirects=False,
                 request_timeout=10
             )
@@ -180,13 +181,17 @@ class AggregatorLoginHandler(AggregatorBaseHandler):
 
             auth_session_id = None
             if "Set-Cookie" in response.headers:
-                cookies = response.headers.get_list("Set-Cookie")
-                for cookie in cookies:
-                    if "session_id=" in cookie:
-                        match = re.search(r'session_id=([^;]+)', cookie)
-                        if match:
-                            auth_session_id = match.group(1)
-                            break
+                from http.cookies import SimpleCookie
+                for header in response.headers.get_list("Set-Cookie"):
+                    if "session_id=" in header:
+                        cookie = SimpleCookie()
+                        cookie.load(header)
+                        if "session_id" in cookie:
+                            # Păstrăm valoarea brută (cu tot cu ghilimele dacă există) pentru a fi compatibili cu backend-ul
+                            match = re.search(r'session_id=([^;]+)', header)
+                            if match:
+                                auth_session_id = match.group(1)
+                                break
 
             if response.code in [302, 200] and auth_session_id:
                 agg_sid = str(uuid.uuid4())
@@ -198,8 +203,10 @@ class AggregatorLoginHandler(AggregatorBaseHandler):
                 }
                 self.set_secure_cookie("agg_session_id", agg_sid, expires_days=1, path="/")
                 log.info(f"User {username} logged in via Aggregator for server {server_url}")
-                self.redirect("/")
+                # Redirect direct la comfy după login reușit
+                self.redirect("/comfy/")
             else:
+                log.warning(f"Login failed for {username} on {server_url}. Code: {response.code}, Session found: {bool(auth_session_id)}")
                 self.render("plugin_login.html", plugin_name=config["plugin_name"], username=username, server_url=server_url, error="Invalid credentials or server error")
         except Exception as e:
             log.error(f"Login error for {server_url}: {e}")
@@ -311,18 +318,10 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
 
         backend_base = session["server_url"].rstrip('/')
 
-        # Logica de path din auth_server.py: folosim URI-ul brut
+        # Sincronizare cu auth_server.py: folosim URI-ul brut direct,
+        # fără să tăiem /comfy/ deoarece serverul backend are deja propria logică de prefix.
         raw_uri = self.request.uri
-        if raw_uri.startswith('/comfy/'):
-            proxy_path = raw_uri[7:]
-        elif raw_uri == '/comfy':
-            proxy_path = ''
-        elif raw_uri.startswith('/'):
-            proxy_path = raw_uri[1:]
-        else:
-            proxy_path = raw_uri
-
-        target_url = f"{backend_base}/{proxy_path}"
+        target_url = f"{backend_base}{raw_uri}"
 
         log.info(f"Aggregator Proxy: {method} {raw_uri} -> {target_url}")
         client = tornado.httpclient.AsyncHTTPClient()
@@ -384,8 +383,8 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
             if response.code == 302:
                 loc = response.headers.get("Location", "")
                 parsed_loc = urlparse(loc)
-                # Dacă backend-ul ne trimite la login sau la root (comportament tipic auth_server.py când nu ești logat)
-                if parsed_loc.path in ['/login', '/login/', '/', '']:
+                # Dacă backend-ul ne trimite la login (comportament tipic auth_server.py când nu ești logat)
+                if parsed_loc.path in ['/login', '/login/']:
                     log.warning(f"Backend a respins sesiunea pentru {session['user']} (Redirect detectat: {loc}). Curățăm sesiunea locală.")
                     sid = self.get_secure_cookie("agg_session_id")
                     if sid:
@@ -581,9 +580,13 @@ class AggregatorDashboardHandler(AggregatorBaseHandler):
 
 class AggregatorRootHandler(AggregatorBaseHandler):
     def get(self):
-        # Root-ul aggregatorului afișează ÎNTOTDEAUNA dashboard-ul (lista de useri)
-        # Acest lucru previne buclele de redirect infinite între / și /comfy/
-        if not self.get_current_user() and self.get_secure_cookie("agg_session_id"):
+        session = self.get_current_user()
+        if session:
+            # Dacă suntem logați, mergem la comfy
+            self.redirect("/comfy/")
+            return
+
+        if self.get_secure_cookie("agg_session_id"):
             self.clear_cookie("agg_session_id", path="/")
 
         self.render("plugin_index.html", plugin_name=config["plugin_name"])
