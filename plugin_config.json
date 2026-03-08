@@ -1,0 +1,13 @@
+{
+    "plugin_name": "PRO AI Multi-Server Aggregator",
+    "port": 8200,
+    "servers": [
+        {
+            "url": "http://localhost:7861",
+            "display_name": "Server Principal"
+        }
+    ],
+    "admin_port": 8201,
+    "cookie_secret": "iZis1EBz89XCTjT5oGj1MxBouFHvtVoA688kDn9MJBo=",
+    "admin_password": "admin"
+}

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html><head><title>{{ plugin_name }} - Login</title><meta charset="utf-8">
+<link rel="stylesheet" type="text/css" href="/static/css/login.css">
+</head>
+<body>
+    <div class="container">
+        <div class="login-title">{{ plugin_name }}</div>
+        <div class="login-subtitle">CONECTARE LA {{ username }}</div>
+
+        <form method="post">
+            <input type="hidden" name="server_url" value="{{ server_url }}">
+            <input type="hidden" name="username" value="{{ username }}">
+            <div style="margin-bottom: 15px; font-weight: bold;">Utilizator: {{ username }}</div>
+            <input type="password" name="password" placeholder="Parolă" required autofocus><br>
+            <button type="submit">Autentificare</button>
+        </form>
+
+        {% if error %}
+            <p class="error">{{ error }}</p>
+        {% end %}
+
+        <div style="margin-top: 20px;">
+            <a href="/" style="color: #007bff; text-decoration: none; font-size: 14px;">← Înapoi la listă</a>
+        </div>
+    </div>
+</body></html>

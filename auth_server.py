@@ -198,6 +198,7 @@ USER_TYPING_STATUS = {}
 # === FILE STORAGE FOR CHAT ===
 CHAT_FILES = {}
 CHAT_FILES_DIR = "chat_files"
+LAST_PLUGIN_ACTIVITY = {}
 
 # === WORKFLOW BROWSER ===
 WORKFLOW_ROOT_DIR = "/mnt/prouser/spatiu/ComfyUI/workflows"
@@ -758,6 +759,12 @@ class LoginHandler(BaseHandler):
 
 class UserStatusHandler(BaseHandler):
     def get(self):
+        # Tracking activitate plugin-uri externe
+        plugin_name = self.request.headers.get("X-Plugin-Name")
+        if plugin_name:
+            LAST_PLUGIN_ACTIVITY[plugin_name] = time.time()
+            log.info(f"Activitate detectată de la Plugin Server: {plugin_name}")
+
         user_status = []
         sorted_users = sorted(USERS.items(), key=lambda x: x[0].lower())
         
@@ -771,8 +778,15 @@ class UserStatusHandler(BaseHandler):
                 "nginx_auth": user_data.get("nginx_auth", {"enabled": False})
             })
         
+        # Filtrează plugin-urile active în ultimele 60 de secunde
+        current_time = time.time()
+        active_plugins = [name for name, last_seen in LAST_PLUGIN_ACTIVITY.items() if current_time - last_seen < 60]
+
         self.set_header("Content-Type", "application/json")
-        self.write({"users": user_status})
+        self.write({
+            "users": user_status,
+            "plugins_active": active_plugins
+        })
 
 class UserSettingsHandler(BaseHandler):
     def post(self):
@@ -2541,7 +2555,8 @@ class MultiInstanceProxyHandler(BaseHandler):
                     if header_lower == 'location':
                         location = value
                         if location.startswith(comfy_url):
-                            location = location.replace(comfy_url, f"{self.request.protocol}://{self.request.host}/comfy")
+                            host = self.request.headers.get("X-Forwarded-Host", self.request.host)
+                            location = location.replace(comfy_url, f"{self.request.protocol}://{host}/comfy")
                         self.set_header(header, location)
                     elif header_lower.startswith('access-control-allow-'):
                         # Păstrăm headerul de CORS de la upstream
@@ -2576,8 +2591,9 @@ class MultiInstanceProxyHandler(BaseHandler):
                     
                     content = response.body.decode(encoding, errors='replace')
                     
-                    # Rescrie URL-urile
-                    proxy_base_url = f"{self.request.protocol}://{self.request.host}"
+                    # Rescrie URL-urile - suportă X-Forwarded-Host pentru aggregator
+                    host = self.request.headers.get("X-Forwarded-Host", self.request.host)
+                    proxy_base_url = f"{self.request.protocol}://{host}"
                     content = self._rewrite_urls(content, comfy_url, proxy_base_url)
                     
                     # Injectează UI-ul nostru doar în HTML (doar pe succes)

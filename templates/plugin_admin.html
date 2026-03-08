@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html><head><title>Admin Aggregator</title><meta charset="utf-8">
+<link rel="stylesheet" type="text/css" href="/static/css/login.css">
+<style>
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; color: white; }
+    th, td { padding: 12px; border: 1px solid #444; text-align: left; }
+    th { background: #333; }
+    .btn-del { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; }
+</style>
+</head>
+<body style="background: #1a1a1a;">
+    <div class="container" style="max-width: 800px;">
+        <div class="login-title">Admin Aggregator</div>
+
+        <div style="background: #2a2a2a; padding: 20px; border-radius: 10px; margin-top: 20px;">
+            <h3>Adaugă Server Nou</h3>
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <input id="new-name" placeholder="Nume Server (ex: Server GPU 1)" style="width: 40%;">
+                <input id="new-url" placeholder="URL (ex: http://192.168.1.10:7861)" style="width: 40%;">
+                <button onclick="addServer()" style="width: 20%;">Adaugă</button>
+            </div>
+        </div>
+
+        <div style="background: #2a2a2a; padding: 20px; border-radius: 10px; margin-top: 20px;">
+            <h3>Servere Înrolate</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nume</th>
+                        <th>URL</th>
+                        <th>Acțiuni</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for i, server in enumerate(config['servers']) %}
+                    <tr>
+                        <td>{{ server['display_name'] }}</td>
+                        <td>{{ server['url'] }}</td>
+                        <td><button class="btn-del" onclick="deleteServer({{ i }})">Șterge</button></td>
+                    </tr>
+                    {% end %}
+                </tbody>
+            </table>
+        </div>
+
+        <div style="margin-top: 20px; text-align: center;">
+            <a href="http://localhost:{{ config['port'] }}" target="_blank" style="color: #007bff;">Deschide Aggregator UI →</a>
+        </div>
+    </div>
+
+    <script>
+    function addServer() {
+        const name = document.getElementById('new-name').value;
+        const url = document.getElementById('new-url').value;
+        if (!name || !url) return alert('Completează ambele câmpuri');
+
+        fetch('/api/servers', {
+            method: 'POST',
+            body: JSON.stringify({ display_name: name, url: url })
+        }).then(() => location.reload());
+    }
+
+    function deleteServer(index) {
+        if (!confirm('Ești sigur că vrei să ștergi acest server?')) return;
+        fetch('/api/servers?index=' + index, { method: 'DELETE' })
+            .then(() => location.reload());
+    }
+    </script>
+</body></html>
