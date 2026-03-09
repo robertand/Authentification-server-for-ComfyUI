@@ -858,8 +858,15 @@ window.onclick = function(event) {
     if (event.target == workflowBrowserModal) {
         closeWorkflowBrowser();
     }
-    if (event.target == aboutDrawer) {
-        closeAboutDrawer();
+
+    // Handle aboutDrawer specifically for "click outside"
+    if (aboutDrawer && aboutDrawer.classList.contains('open')) {
+        const isClickInside = aboutDrawer.contains(event.target);
+        const isAboutBtn = event.target.closest('.comfy-about-btn') || event.target.closest('.about-btn-login');
+
+        if (!isClickInside && !isAboutBtn) {
+            closeAboutDrawer();
+        }
     }
 }
 

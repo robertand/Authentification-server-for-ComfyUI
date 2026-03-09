@@ -576,7 +576,7 @@ class AdminLoginHandler(AdminBaseHandler):
 
 class AdminMainHandler(AdminBaseHandler):
     @tornado.web.authenticated
-    def get(self): self.render("plugin_admin.html", config=config)
+    def get(self): self.render("plugin_admin.html", config=config, enumerate=enumerate)
 
 class AdminApiServersHandler(AdminBaseHandler):
     @tornado.web.authenticated
