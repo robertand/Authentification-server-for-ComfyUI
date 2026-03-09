@@ -455,6 +455,21 @@
                 <!-- User list will be loaded here -->
             </div>
             
+            <h2>Server Settings</h2>
+            <div class="nginx-section">
+                <div class="form-group">
+                    <label>Auth Server Port:</label>
+                    <input type="number" id="authPort" placeholder="7861">
+                </div>
+                <div class="form-group">
+                    <label>Admin Interface Port:</label>
+                    <input type="number" id="adminPort" placeholder="8199">
+                </div>
+                <button onclick="saveServerSettings()" class="security">Save Port Settings</button>
+                <button onclick="restartServer()" class="delete">Restart Server</button>
+                <div id="serverSettingsMessage" style="margin-top: 10px;"></div>
+            </div>
+
             <h2>Workflow Settings</h2>
             <div class="form-group">
                 <label>Workflow Root Directory:</label>
@@ -1127,6 +1142,69 @@
                 });
         }
 
+        // Server Settings Functions
+        function loadServerSettings() {
+            fetch('/admin/api/server-settings')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('authPort').value = data.auth_port;
+                    document.getElementById('adminPort').value = data.admin_port;
+                });
+        }
+
+        function saveServerSettings() {
+            const authPort = document.getElementById('authPort').value;
+            const adminPort = document.getElementById('adminPort').value;
+            const messageDiv = document.getElementById('serverSettingsMessage');
+
+            fetch('/admin/api/server-settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    auth_port: authPort,
+                    admin_port: adminPort
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    messageDiv.innerHTML = '<div style="color: #28a745;">' + data.message + '</div>';
+                    showSaveNotification();
+                } else {
+                    messageDiv.innerHTML = '<div style="color: #dc3545;">' + data.error + '</div>';
+                }
+            });
+        }
+
+        function restartServer() {
+            if (!confirm('Sunteți sigur că doriți să restartați serverul? Această acțiune va deconecta toți utilizatorii activi.')) return;
+
+            const messageDiv = document.getElementById('serverSettingsMessage');
+            messageDiv.innerHTML = '<div style="color: #ffc107;">Restartarea a fost solicitată...</div>';
+
+            fetch('/admin/api/restart', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        messageDiv.innerHTML = '<div style="color: #28a745;">Serverul se restartează. Reîncărcați pagina peste câteva secunde.</div>';
+                        // Optionally redirect after a delay
+                        setTimeout(() => {
+                            const newAdminPort = document.getElementById('adminPort').value;
+                            const currentUrl = new URL(window.location.href);
+                            if (newAdminPort && currentUrl.port !== newAdminPort) {
+                                window.location.href = currentUrl.protocol + '//' + currentUrl.hostname + ':' + newAdminPort + '/admin/';
+                            } else {
+                                window.location.reload();
+                            }
+                        }, 5000);
+                    }
+                })
+                .catch(err => {
+                    console.error('Eroare restart:', err);
+                    messageDiv.innerHTML = '<div style="color: #dc3545;">Eroare la restart. Verificați logurile serverului.</div>';
+                });
+        }
+
         // Workflow Settings Functions
         function loadWorkflowSettings() {
             fetch('/admin/api/workflow-settings')
@@ -1718,6 +1796,7 @@
         // Load initial data
         loadStatus();
         loadUsers();
+        loadServerSettings();
         loadWorkflowSettings();
         setInterval(loadStatus, 5000); // Refresh every 5 seconds
     </script>

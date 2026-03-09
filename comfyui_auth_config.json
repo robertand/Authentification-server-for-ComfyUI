@@ -1,4 +1,6 @@
 {
+  "auth_port": 7861,
+  "admin_port": 8199,
   "users": {
     "user1": {
       "password": "$2b$12$HXpOl47B1rlqll6PiGo8AumG4RmTw02Qtgff55eGk4p1gm6Shsk8q",

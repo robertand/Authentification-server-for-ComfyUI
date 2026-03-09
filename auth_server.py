@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import socket
 import os
+import sys
 import bcrypt
 import base64
 from urllib.parse import quote, unquote, urlparse, urlunparse
@@ -139,11 +140,11 @@ log = logging.getLogger("AUTH")
 
 # === CONFIGURARE ===
 CONFIG_FILE = "comfyui_auth_config.json"
-AUTH_PORT = 7861  # Auth server principal
-ADMIN_PORT = 8199  # Admin interface
 
 # Configurație implicită
 DEFAULT_CONFIG = {
+    "auth_port": 7861,
+    "admin_port": 8199,
     "users": {
         "user1": {
             "password": "comfy.123", 
@@ -408,7 +409,7 @@ def list_user_workflows(username):
 
 # Încarcă configurația din fișier sau folosește cea implicită
 def load_config():
-    global WORKFLOW_ROOT_DIR
+    global WORKFLOW_ROOT_DIR, AUTH_PORT, ADMIN_PORT
     
     if os.path.exists(CONFIG_FILE):
         try:
@@ -447,11 +448,16 @@ def load_config():
         WORKFLOW_ROOT_DIR = config["workflow_root"]
         log.info(f"✓ Workflow root directory loaded: {WORKFLOW_ROOT_DIR}")
     
+    AUTH_PORT = config.get("auth_port", 7861)
+    ADMIN_PORT = config.get("admin_port", 8199)
+
     return config
 
 def save_config():
     try:
         config_data = {
+            "auth_port": AUTH_PORT,
+            "admin_port": ADMIN_PORT,
             "users": USERS,
             "admin": ADMIN_CONFIG,
             "workflow_root": WORKFLOW_ROOT_DIR,
@@ -1890,6 +1896,58 @@ class AdminNginxAuthUserHandler(BaseHandler):
         self.write({"success": True, "message": f"Nginx auth settings updated for user {username}"})
 
 # === ADMIN WORKFLOW SETTINGS ===
+class AdminServerSettingsHandler(BaseHandler):
+    def get(self):
+        if not is_admin_authenticated(self):
+            self.set_status(401)
+            return
+
+        self.set_header("Content-Type", "application/json")
+        self.write({
+            "auth_port": AUTH_PORT,
+            "admin_port": ADMIN_PORT
+        })
+
+    def post(self):
+        if not is_admin_authenticated(self):
+            self.set_status(401)
+            return
+
+        try:
+            data = json.loads(self.request.body)
+            global AUTH_PORT, ADMIN_PORT
+            AUTH_PORT = int(data.get("auth_port", AUTH_PORT))
+            ADMIN_PORT = int(data.get("admin_port", ADMIN_PORT))
+
+            save_config()
+            log.info(f"Admin updated server ports: Auth={AUTH_PORT}, Admin={ADMIN_PORT}")
+            self.write({"success": True, "message": "Porturile au fost actualizate. Vă rugăm să restartați serverul."})
+        except Exception as e:
+            log.error(f"Error updating server ports: {e}")
+            self.set_status(500)
+            self.write({"success": False, "error": str(e)})
+
+class AdminRestartHandler(BaseHandler):
+    def post(self):
+        if not is_admin_authenticated(self):
+            self.set_status(401)
+            return
+
+        log.warning("Admin requested server restart...")
+        self.write({"success": True, "message": "Serverul se restartează..."})
+
+        # Schedule restart after a short delay to allow response to be sent
+        tornado.ioloop.IOLoop.current().add_timeout(
+            time.time() + 1,
+            self._restart_server
+        )
+
+    def _restart_server(self):
+        log.warning("Restarting process now!")
+        # Re-execute the current script
+        python = sys.executable
+        os.execl(python, python, *sys.argv)
+
 class AdminWorkflowSettingsHandler(BaseHandler):
     def get(self):
         if not is_admin_authenticated(self):
@@ -3273,6 +3331,8 @@ def make_admin_app():
         (r"/admin/api/security/password", AdminPasswordHandler),
         (r"/admin/api/nginx-auth/global", AdminNginxAuthGlobalHandler),
         (r"/admin/api/nginx-auth/user/(.*)", AdminNginxAuthUserHandler),
+        (r"/admin/api/server-settings", AdminServerSettingsHandler),
+        (r"/admin/api/restart", AdminRestartHandler),
         (r"/admin/api/workflow-settings", AdminWorkflowSettingsHandler),
         (r"/admin/api/chat/users", AdminChatUsersHandler),
         (r"/admin/api/chat/messages/(.*)", AdminChatMessagesHandler),
@@ -3324,13 +3384,17 @@ if __name__ == "__main__":
     admin_app = make_admin_app()
     
     try:
-        auth_app.listen(AUTH_PORT, "0.0.0.0")
-        admin_app.listen(ADMIN_PORT, "0.0.0.0")
+        # Use config ports directly
+        final_auth_port = config.get("auth_port", 7861)
+        final_admin_port = config.get("admin_port", 8199)
+
+        auth_app.listen(final_auth_port, "0.0.0.0")
+        admin_app.listen(final_admin_port, "0.0.0.0")
         
-        log.info(f"Auth server started on port {AUTH_PORT} (PROXY MODE)")
-        log.info(f"Admin server started on port {ADMIN_PORT}")
-        print(f"Auth server started on port {AUTH_PORT} (PROXY MODE)")
-        print(f"Admin interface started on port {ADMIN_PORT}")
+        log.info(f"Auth server started on port {final_auth_port} (PROXY MODE)")
+        log.info(f"Admin server started on port {final_admin_port}")
+        print(f"Auth server started on port {final_auth_port} (PROXY MODE)")
+        print(f"Admin interface started on port {final_admin_port}")
         print("Multi-user system active with full proxy support")
         print(f"Configuration will be saved to: {CONFIG_FILE}")
         print(f"Workflow directories will be created in: {WORKFLOW_ROOT_DIR}")
