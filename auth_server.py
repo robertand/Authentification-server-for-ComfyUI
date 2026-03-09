@@ -203,6 +203,46 @@ LAST_PLUGIN_ACTIVITY = {}
 # === WORKFLOW BROWSER ===
 WORKFLOW_ROOT_DIR = "/mnt/prouser/spatiu/ComfyUI/workflows"
 
+# === USAGE TRACKING ===
+USAGE_STATS_FILE = "comfyui_usage_stats.json"
+USAGE_STATS = {"active_jobs": {}, "history": []}
+
+def load_usage_stats():
+    global USAGE_STATS
+    if os.path.exists(USAGE_STATS_FILE):
+        try:
+            with open(USAGE_STATS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                USAGE_STATS["history"] = data.get("history", [])[-1000:] # Keep last 1000
+                log.info("✓ Usage stats loaded")
+        except:
+            log.error("Failed to load usage stats")
+
+def save_usage_stats():
+    try:
+        with open(USAGE_STATS_FILE, 'w', encoding='utf-8') as f:
+            json.dump({"history": USAGE_STATS["history"]}, f, indent=2)
+    except:
+        pass
+
+def record_job_start(user, prompt_id, server_url):
+    USAGE_STATS["active_jobs"][prompt_id] = {
+        "user": user,
+        "server": server_url,
+        "start_time": time.time(),
+        "prompt_id": prompt_id
+    }
+    log.info(f"Job started: {prompt_id} for user {user} on {server_url}")
+
+def record_job_end(prompt_id):
+    if prompt_id in USAGE_STATS["active_jobs"]:
+        job = USAGE_STATS["active_jobs"].pop(prompt_id)
+        job["end_time"] = time.time()
+        job["duration"] = job["end_time"] - job["start_time"]
+        USAGE_STATS["history"].append(job)
+        save_usage_stats()
+        log.info(f"Job finished: {prompt_id} (Duration: {job['duration']:.2f}s)")
+
 # Create chat files directory if it doesn't exist
 if not os.path.exists(CHAT_FILES_DIR):
     os.makedirs(CHAT_FILES_DIR, exist_ok=True)
@@ -438,6 +478,7 @@ def cleanup_stuck_sessions():
 
 # Încarcă configurația inițială
 config = load_config()
+load_usage_stats()
 USERS = config["users"]
 ADMIN_CONFIG = config["admin"]
 GLOBAL_NGINX_AUTH = config.get("global_nginx_auth", {"enabled": False, "username": "", "password": ""})
@@ -1523,6 +1564,15 @@ class AdminHandler(BaseHandler):
             return
         self.render("admin.html", about_modal=ABOUT_DRAWER_HTML)
 
+class AdminUsageStatsHandler(BaseHandler):
+    def get(self):
+        if not is_admin_authenticated(self):
+            self.set_status(401)
+            return
+
+        self.set_header("Content-Type", "application/json")
+        self.write(USAGE_STATS)
+
 class AdminStatusHandler(BaseHandler):
     def get(self):
         if not is_admin_authenticated(self):
@@ -2581,6 +2631,16 @@ class MultiInstanceProxyHandler(BaseHandler):
             is_json = 'application/json' in content_type and response.code not in [204, 304]
             
             if (is_html or is_json) and response.body:
+                # Interceptăm prompt_id pentru monitorizare utilizare
+                if is_json and "/prompt" in raw_path and method == "POST" and response.code == 200:
+                    try:
+                        prompt_resp = json.loads(response.body)
+                        prompt_id = prompt_resp.get("prompt_id")
+                        if prompt_id:
+                            record_job_start(username, prompt_id, comfy_url)
+                    except:
+                        pass
+
                 try:
                     # Determină encoding-ul
                     encoding = 'utf-8'
@@ -2975,6 +3035,21 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
                         break
                     
                     if self.ws_connection and not self.ws_connection.is_closing():
+                        # Monitorizare terminare job via WebSocket
+                        if not isinstance(msg, bytes):
+                            try:
+                                ws_data = json.loads(msg)
+                                # "executing" cu node: null înseamnă că coada e goală sau job-ul s-a terminat
+                                if ws_data.get("type") == "executing" and ws_data.get("data", {}).get("node") is None:
+                                    prompt_id = ws_data.get("data", {}).get("prompt_id")
+                                    if prompt_id: record_job_end(prompt_id)
+                                # Alternativ, mesajul "executed" confirmă finalizarea unui nod terminal
+                                elif ws_data.get("type") == "executed":
+                                    prompt_id = ws_data.get("data", {}).get("prompt_id")
+                                    if prompt_id: record_job_end(prompt_id)
+                            except:
+                                pass
+
                         await self.write_message(msg, isinstance(msg, bytes))
                 except tornado.websocket.WebSocketClosedError:
                     log.info(f"WebSocket connection closed for user {self.username}")
@@ -3186,6 +3261,7 @@ def make_admin_app():
         (r"/admin/login", AdminLoginHandler),
         (r"/admin/logout", AdminLogoutHandler),
         (r"/admin/api/status", AdminStatusHandler),
+        (r"/admin/api/usage-stats", AdminUsageStatsHandler),
         (r"/admin/api/sessions", AdminSessionsHandler),
         (r"/admin/api/sessions/(.*)", AdminSessionsHandler),
         (r"/admin/api/users", AdminUsersHandler),

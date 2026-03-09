@@ -368,6 +368,7 @@
             <div class="tab active" onclick="showTab('status')">Status</div>
             <div class="tab" onclick="showTab('settings')">Settings</div>
             <div class="tab" onclick="showTab('nginx')">Nginx Auth</div>
+            <div class="tab" onclick="showTab('usage')">Utilizare</div>
             <div class="tab" onclick="showTab('security')">Security</div>
             <div class="tab" onclick="showTab('chat')">Chat</div>
         </div>
@@ -520,6 +521,58 @@
             <div id="passwordMessage" style="margin-top: 15px;"></div>
         </div>
 
+        <div id="usage" class="tab-content">
+            <h2>Harta Utilizării Sistemului</h2>
+
+            <div class="nginx-section">
+                <h3>Joburi Active (Real-time)</h3>
+                <div id="activeJobsGrid" class="status-grid">
+                    <!-- Joburi active aici -->
+                </div>
+            </div>
+
+            <div class="nginx-section">
+                <h3>Statistici per Utilizator</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Utilizator</th>
+                            <th>Total Joburi</th>
+                            <th>Timp Total (sec)</th>
+                            <th>Media (sec)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="userStatsTable">
+                        <!-- Statistici useri aici -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="nginx-section">
+                <h3>Statistici per Server</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Server URL</th>
+                            <th>Joburi Procesate</th>
+                        </tr>
+                    </thead>
+                    <tbody id="serverStatsTable">
+                        <!-- Statistici servere aici -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="nginx-section">
+                <h3>Istoric Recent</h3>
+                <div id="usageHistory" style="max-height: 400px; overflow-y: auto; background: #111; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px;">
+                    <!-- Istoric aici -->
+                </div>
+            </div>
+
+            <button onclick="loadUsageStats()">Actualizează Date</button>
+        </div>
+
         <div id="chat" class="tab-content">
             <h2>User Chat</h2>
             <div class="chat-section">
@@ -577,6 +630,8 @@
             } else if (tabName === 'nginx') {
                 loadGlobalNginxAuth();
                 loadNginxUsersList();
+            } else if (tabName === 'usage') {
+                loadUsageStats();
             } else {
                 stopAdminChatAutoRefresh();
             }
@@ -1368,6 +1423,93 @@
         document.getElementById('adminChatFileInput').addEventListener('change', function() {
             handleAdminFileSelection();
         });
+
+        function loadUsageStats() {
+            fetch('/admin/api/usage-stats')
+                .then(r => r.json())
+                .then(data => {
+                    updateActiveJobs(data.active_jobs);
+                    updateStatsTables(data.history);
+                    updateUsageHistory(data.history);
+                });
+        }
+
+        function updateActiveJobs(activeJobs) {
+            const grid = document.getElementById('activeJobsGrid');
+            grid.innerHTML = '';
+
+            const jobs = Object.values(activeJobs);
+            if (jobs.length === 0) {
+                grid.innerHTML = '<p style="padding: 10px; color: #888;">Niciun job în curs de procesare.</p>';
+                return;
+            }
+
+            jobs.forEach(job => {
+                const card = document.createElement('div');
+                card.className = 'status-card limited';
+                const elapsed = Math.floor(Date.now() / 1000 - job.start_time);
+                card.innerHTML = `
+                    <h4>Utilizator: ${job.user}</h4>
+                    <p>Server: ${job.server}</p>
+                    <p>ID Prompt: ${job.prompt_id.substring(0, 8)}...</p>
+                    <p>Timp scurs: ${elapsed}s</p>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        function updateStatsTables(history) {
+            const userStats = {};
+            const serverStats = {};
+
+            history.forEach(job => {
+                // Per User
+                if (!userStats[job.user]) userStats[job.user] = { count: 0, time: 0 };
+                userStats[job.user].count++;
+                userStats[job.user].time += job.duration;
+
+                // Per Server
+                if (!serverStats[job.server]) serverStats[job.server] = 0;
+                serverStats[job.server]++;
+            });
+
+            // Fill User Table
+            const userTable = document.getElementById('userStatsTable');
+            userTable.innerHTML = '';
+            Object.entries(userStats).sort((a,b) => b[1].count - a[1].count).forEach(([user, stats]) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${user}</td>
+                    <td>${stats.count}</td>
+                    <td>${stats.time.toFixed(1)}</td>
+                    <td>${(stats.time / stats.count).toFixed(1)}</td>
+                `;
+                userTable.appendChild(row);
+            });
+
+            // Fill Server Table
+            const serverTable = document.getElementById('serverStatsTable');
+            serverTable.innerHTML = '';
+            Object.entries(serverStats).sort((a,b) => b[1] - a[1]).forEach(([server, count]) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `<td>${server}</td><td>${count}</td>`;
+                serverTable.appendChild(row);
+            });
+        }
+
+        function updateUsageHistory(history) {
+            const logDiv = document.getElementById('usageHistory');
+            logDiv.innerHTML = '';
+
+            // Revers cronologic
+            [...history].reverse().slice(0, 50).forEach(job => {
+                const timeStr = new Date(job.end_time * 1000).toLocaleString();
+                const p = document.createElement('p');
+                p.style.margin = '2px 0';
+                p.innerHTML = `<span style="color: #28a745;">[${timeStr}]</span> <strong>${job.user}</strong> a finalizat job pe ${job.server} (${job.duration.toFixed(1)}s)`;
+                logDiv.appendChild(p);
+            });
+        }
 
         // Load initial data
         loadStatus();
