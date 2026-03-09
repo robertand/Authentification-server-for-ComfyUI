@@ -3,6 +3,7 @@
 <head>
     <title>ComfyUI Admin</title>
     <meta charset="utf-8">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 20px; background: #1a1a1a; color: #e0e0e0; }
         .container { max-width: 1200px; margin: 0 auto; }
@@ -524,6 +525,27 @@
         <div id="usage" class="tab-content">
             <h2>Harta Utilizării Sistemului</h2>
 
+            <div class="nginx-section" style="display: flex; gap: 20px; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
+                    <h3 style="margin-top:0;">Joburi per Utilizator</h3>
+                    <canvas id="jobsChart"></canvas>
+                </div>
+                <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
+                    <h3 style="margin-top:0;">Timp Total per Utilizator (sec)</h3>
+                    <canvas id="timeChart"></canvas>
+                </div>
+                <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
+                    <h3 style="margin-top:0;">Activitate în Timp (Ultimele 24h)</h3>
+                    <canvas id="timelineChart"></canvas>
+                </div>
+                <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
+                    <h3 style="margin-top:0;">Distribuție per Server</h3>
+                    <div style="max-height: 300px; display: flex; justify-content: center;">
+                        <canvas id="serverPieChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
             <div class="nginx-section">
                 <h3>Joburi Active (Real-time)</h3>
                 <div id="activeJobsGrid" class="status-grid">
@@ -532,7 +554,7 @@
             </div>
 
             <div class="nginx-section">
-                <h3>Statistici per Utilizator</h3>
+                <h3>Statistici detaliate per Utilizator</h3>
                 <table>
                     <thead>
                         <tr>
@@ -615,6 +637,10 @@
         let adminChatWebSocket = null;
         let adminChatAutoRefresh = null;
         let adminAttachedFiles = [];
+        let jobsChart = null;
+        let timeChart = null;
+        let timelineChart = null;
+        let serverPieChart = null;
 
         function showTab(tabName) {
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
@@ -1473,10 +1499,12 @@
                 serverStats[job.server]++;
             });
 
+            const sortedUsers = Object.entries(userStats).sort((a,b) => b[1].count - a[1].count);
+
             // Fill User Table
             const userTable = document.getElementById('userStatsTable');
             userTable.innerHTML = '';
-            Object.entries(userStats).sort((a,b) => b[1].count - a[1].count).forEach(([user, stats]) => {
+            sortedUsers.forEach(([user, stats]) => {
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td>${user}</td>
@@ -1487,6 +1515,9 @@
                 userTable.appendChild(row);
             });
 
+            // Update Charts
+            updateCharts(sortedUsers, serverStats, history);
+
             // Fill Server Table
             const serverTable = document.getElementById('serverStatsTable');
             serverTable.innerHTML = '';
@@ -1495,6 +1526,179 @@
                 row.innerHTML = `<td>${server}</td><td>${count}</td>`;
                 serverTable.appendChild(row);
             });
+        }
+
+        function updateCharts(sortedUsers, serverStats, history) {
+            const labels = sortedUsers.map(u => u[0]);
+            const jobsData = sortedUsers.map(u => u[1].count);
+            const timeData = sortedUsers.map(u => u[1].time);
+
+            const colors = [
+                'rgba(255, 99, 132, 0.8)',
+                'rgba(54, 162, 235, 0.8)',
+                'rgba(255, 206, 86, 0.8)',
+                'rgba(75, 192, 192, 0.8)',
+                'rgba(153, 102, 255, 0.8)',
+                'rgba(255, 159, 64, 0.8)',
+                'rgba(199, 199, 199, 0.8)',
+                'rgba(83, 102, 255, 0.8)',
+                'rgba(40, 159, 64, 0.8)',
+                'rgba(210, 199, 199, 0.8)',
+            ];
+
+            const commonOptions = {
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                        ticks: { color: '#aaa' }
+                    },
+                    x: {
+                        grid: { display: false },
+                        ticks: { color: '#aaa' }
+                    }
+                }
+            };
+
+            // Jobs Chart
+            const jobsCtx = document.getElementById('jobsChart').getContext('2d');
+            if (jobsChart) {
+                jobsChart.data.labels = labels;
+                jobsChart.data.datasets[0].data = jobsData;
+                jobsChart.update();
+            } else {
+                jobsChart = new Chart(jobsCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: jobsData,
+                            backgroundColor: colors,
+                            borderRadius: 5
+                        }]
+                    },
+                    options: commonOptions
+                });
+            }
+
+            // Time Chart
+            const timeCtx = document.getElementById('timeChart').getContext('2d');
+            if (timeChart) {
+                timeChart.data.labels = labels;
+                timeChart.data.datasets[0].data = timeData;
+                timeChart.update();
+            } else {
+                timeChart = new Chart(timeCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: timeData,
+                            backgroundColor: colors,
+                            borderRadius: 5
+                        }]
+                    },
+                    options: commonOptions
+                });
+            }
+
+            // Pie Chart for Servers
+            const serverLabels = Object.keys(serverStats);
+            const serverData = Object.values(serverStats);
+            const pieCtx = document.getElementById('serverPieChart').getContext('2d');
+            if (serverPieChart) {
+                serverPieChart.data.labels = serverLabels;
+                serverPieChart.data.datasets[0].data = serverData;
+                serverPieChart.update();
+            } else {
+                serverPieChart = new Chart(pieCtx, {
+                    type: 'pie',
+                    data: {
+                        labels: serverLabels,
+                        datasets: [{
+                            data: serverData,
+                            backgroundColor: colors,
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'right',
+                                labels: { color: '#aaa' }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Timeline Chart (Last 24h)
+            const timelineData = Array(24).fill(0);
+            const now = Date.now() / 1000;
+            const hourLabels = [];
+            for (let i = 23; i >= 0; i--) {
+                const d = new Date((now - i * 3600) * 1000);
+                hourLabels.push(d.getHours() + ':00');
+            }
+
+            history.forEach(job => {
+                const diffHours = Math.floor((now - job.end_time) / 3600);
+                if (diffHours >= 0 && diffHours < 24) {
+                    timelineData[23 - diffHours]++;
+                }
+            });
+
+            const timelineCtx = document.getElementById('timelineChart').getContext('2d');
+
+            // Create Gradient
+            const gradient = timelineCtx.createLinearGradient(0, 0, 0, 400);
+            gradient.addColorStop(0, 'rgba(0, 123, 255, 0.5)');
+            gradient.addColorStop(1, 'rgba(0, 123, 255, 0)');
+
+            if (timelineChart) {
+                timelineChart.data.labels = hourLabels;
+                timelineChart.data.datasets[0].data = timelineData;
+                timelineChart.data.datasets[0].backgroundColor = gradient;
+                timelineChart.update();
+            } else {
+                timelineChart = new Chart(timelineCtx, {
+                    type: 'line',
+                    data: {
+                        labels: hourLabels,
+                        datasets: [{
+                            label: 'Joburi',
+                            data: timelineData,
+                            borderColor: '#007bff',
+                            borderWidth: 3,
+                            backgroundColor: gradient,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 4,
+                            pointBackgroundColor: '#007bff',
+                            pointHoverRadius: 6
+                        }]
+                    },
+                    options: {
+                        ...commonOptions,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                backgroundColor: 'rgba(0,0,0,0.8)',
+                                padding: 10,
+                                titleColor: '#007bff',
+                                bodyColor: '#fff',
+                                displayColors: false
+                            }
+                        }
+                    }
+                });
+            }
         }
 
         function updateUsageHistory(history) {

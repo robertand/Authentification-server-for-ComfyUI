@@ -2474,9 +2474,9 @@ class MultiInstanceProxyHandler(BaseHandler):
             target_url += "?" + self.request.query
         
         session_data = get_session(self.get_secure_cookie("session_id").decode())
-        username = session_data["user"] if session_data else "unknown"
+        proxy_username = session_data["user"] if session_data else "unknown"
         
-        log.info(f"Proxying {method} {path} for user {username} to {target_url}")
+        log.info(f"Proxying {method} {path} for user {proxy_username} to {target_url}")
         
         # Pregătește clientul HTTP
         client = tornado.httpclient.AsyncHTTPClient()
@@ -2540,7 +2540,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             
             # Adăugă headere de identificare pentru uz intern
             if session_id:
-                headers['X-User-ID'] = username
+                headers['X-User-ID'] = proxy_username
                 headers['X-Session-ID'] = session_id.decode()
 
             # Curăță Cookie header de cookie-urile noastre interne
@@ -2553,7 +2553,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                     del headers['Cookie']
             
             # Adaugă autentificare nginx dacă este necesară
-            add_nginx_auth_headers(headers, username)
+            add_nginx_auth_headers(headers, proxy_username)
             
             # Pregătește body-ul cererii
             body = None
@@ -2637,7 +2637,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                         prompt_resp = json.loads(response.body)
                         prompt_id = prompt_resp.get("prompt_id")
                         if prompt_id:
-                            record_job_start(username, prompt_id, comfy_url)
+                            record_job_start(proxy_username, prompt_id, comfy_url)
                     except:
                         pass
 
@@ -2658,7 +2658,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                     
                     # Injectează UI-ul nostru doar în HTML (doar pe succes)
                     if is_html and response.code == 200:
-                        content = self._inject_ui(content, username)
+                        content = self._inject_ui(content, proxy_username)
                     
                     self.write(content.encode(encoding))
                 except Exception as e:
