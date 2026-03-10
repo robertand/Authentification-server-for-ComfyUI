@@ -483,7 +483,7 @@ class AggregatorWebSocketProxy(tornado.websocket.WebSocketHandler):
 
         # Includem session_id în query string pentru backend
         uri_parts = list(urlparse(self.request.uri))
-        query = uri_parts[4]
+        query = self.request.query
         new_query = f"{query}&session_id={session['auth_session_id']}" if query else f"session_id={session['auth_session_id']}"
         uri_parts[0] = ws_scheme
         uri_parts[1] = backend_netloc

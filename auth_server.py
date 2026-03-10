@@ -3040,6 +3040,10 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
             if parsed_url.query:
                 query_params.append(parsed_url.query)
             
+            # Includem parametrii originali de la client (ex: clientId)
+            if self.request.query:
+                query_params.append(self.request.query)
+
             # Adăugăm session_id în query string
             if session_id:
                 query_params.append(f"session_id={session_id.decode()}")
