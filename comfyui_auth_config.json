@@ -3,7 +3,7 @@
   "admin_port": 8199,
   "users": {
     "user1": {
-      "password": "$2b$12$HXpOl47B1rlqll6PiGo8AumG4RmTw02Qtgff55eGk4p1gm6Shsk8q",
+      "password": "$2b$12$nPEc3w2cYhgYCqRGEo3JKeNy/s4OAMVb5rUgajy.FBp1l86jpPJuS",
       "comfy_url": "http://127.0.0.1:8188",
       "instances": 0,
       "max_instances": 2,
@@ -16,7 +16,7 @@
       }
     },
     "user2": {
-      "password": "$2b$12$qgkU4WnrAn459WRiJDiym..n66qXQBOEYRDph/tfXraDUJG3PL6S2",
+      "password": "$2b$12$SL211W.QbvEX3g6z8HBAIuayPHOCw9x649mIl5rLjNEG/JJSYbHmC",
       "comfy_url": "http://10.129.131.12:8188",
       "instances": 0,
       "max_instances": 2,

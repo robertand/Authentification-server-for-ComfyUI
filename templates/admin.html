@@ -680,6 +680,37 @@
 
         let currentAnalyticsDate = new Date();
         let usageHistoryData = [];
+        let sessionHistoryData = [];
+        const userColors = {};
+
+        function getUserColor(username) {
+            if (userColors[username]) return userColors[username];
+            const colors = [
+                'rgba(255, 99, 132, 0.6)',
+                'rgba(54, 162, 235, 0.6)',
+                'rgba(255, 206, 86, 0.6)',
+                'rgba(75, 192, 192, 0.6)',
+                'rgba(153, 102, 255, 0.6)',
+                'rgba(255, 159, 64, 0.6)',
+                'rgba(199, 199, 199, 0.6)',
+                'rgba(233, 30, 99, 0.6)',
+                'rgba(156, 39, 176, 0.6)',
+                'rgba(103, 58, 183, 0.6)',
+                'rgba(63, 81, 181, 0.6)',
+                'rgba(33, 150, 243, 0.6)',
+                'rgba(0, 188, 212, 0.6)',
+                'rgba(0, 150, 136, 0.6)',
+                'rgba(76, 175, 80, 0.6)',
+                'rgba(139, 195, 74, 0.6)',
+                'rgba(205, 220, 57, 0.6)',
+                'rgba(255, 235, 59, 0.6)',
+                'rgba(255, 193, 7, 0.6)',
+                'rgba(255, 152, 0, 0.6)'
+            ];
+            const color = colors[Object.keys(userColors).length % colors.length];
+            userColors[username] = color;
+            return color;
+        }
 
         function showTab(tabName) {
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
@@ -1557,6 +1588,17 @@
                 .then(r => r.json())
                 .then(data => {
                     usageHistoryData = data.history;
+
+                    // Merge active sessions for visualization
+                    const now = Date.now() / 1000;
+                    const activeSessions = Object.values(data.active_sessions || {}).map(s => ({
+                        ...s,
+                        end_time: now,
+                        duration: now - s.start_time,
+                        is_active: true
+                    }));
+                    sessionHistoryData = [...(data.session_history || []), ...activeSessions];
+
                     updateActiveJobs(data.active_jobs);
                     updateAnalyticsView();
                     updateUsageHistory(data.history);
@@ -1588,6 +1630,7 @@
             const timelineTitle = document.getElementById('timeline-chart-title');
 
             let filteredHistory = [];
+            let filteredSessions = [];
             const d = currentAnalyticsDate;
 
             if (viewType === 'daily') {
@@ -1595,33 +1638,54 @@
                 dateDisplay.textContent = dayStr;
                 timelineTitle.textContent = 'Hourly Activity';
 
+                const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000;
+                const endOfDay = startOfDay + 86400;
+
                 filteredHistory = usageHistoryData.filter(job => {
                     const jobDate = new Date(job.end_time * 1000);
                     return jobDate.getFullYear() === d.getFullYear() &&
                            jobDate.getMonth() === d.getMonth() &&
                            jobDate.getDate() === d.getDate();
                 });
+
+                filteredSessions = sessionHistoryData.filter(s => {
+                    return s.start_time < endOfDay && s.end_time > startOfDay;
+                });
             } else if (viewType === 'monthly') {
                 const monthStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
                 dateDisplay.textContent = monthStr;
                 timelineTitle.textContent = 'Daily Activity';
+
+                const startOfMonth = new Date(d.getFullYear(), d.getMonth(), 1).getTime() / 1000;
+                const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime() / 1000;
 
                 filteredHistory = usageHistoryData.filter(job => {
                     const jobDate = new Date(job.end_time * 1000);
                     return jobDate.getFullYear() === d.getFullYear() &&
                            jobDate.getMonth() === d.getMonth();
                 });
+
+                filteredSessions = sessionHistoryData.filter(s => {
+                    return s.start_time < endOfMonth && s.end_time > startOfMonth;
+                });
             } else if (viewType === 'yearly') {
                 dateDisplay.textContent = d.getFullYear();
                 timelineTitle.textContent = 'Monthly Activity';
+
+                const startOfYear = new Date(d.getFullYear(), 0, 1).getTime() / 1000;
+                const endOfYear = new Date(d.getFullYear() + 1, 0, 1).getTime() / 1000;
 
                 filteredHistory = usageHistoryData.filter(job => {
                     const jobDate = new Date(job.end_time * 1000);
                     return jobDate.getFullYear() === d.getFullYear();
                 });
+
+                filteredSessions = sessionHistoryData.filter(s => {
+                    return s.start_time < endOfYear && s.end_time > startOfYear;
+                });
             }
 
-            updateStatsTables(filteredHistory);
+            updateStatsTables(filteredHistory, filteredSessions);
         }
 
         function formatDuration(seconds) {
@@ -1660,7 +1724,7 @@
             });
         }
 
-        function updateStatsTables(history) {
+        function updateStatsTables(history, sessions) {
             const userStats = {};
             const serverStats = {};
             let grandTotalSeconds = 0;
@@ -1698,7 +1762,7 @@
             });
 
             // Update Charts
-            updateCharts(sortedUsers, serverStats, history);
+            updateCharts(sortedUsers, serverStats, history, sessions);
 
             // Fill Server Table
             const serverTable = document.getElementById('serverStatsTable');
@@ -1710,23 +1774,10 @@
             });
         }
 
-        function updateCharts(sortedUsers, serverStats, history) {
+        function updateCharts(sortedUsers, serverStats, history, sessions) {
             const labels = sortedUsers.map(u => u[0]);
             const jobsData = sortedUsers.map(u => u[1].count);
             const timeData = sortedUsers.map(u => u[1].time / 60); // In minutes
-
-            const colors = [
-                'rgba(255, 99, 132, 0.8)',
-                'rgba(54, 162, 235, 0.8)',
-                'rgba(255, 206, 86, 0.8)',
-                'rgba(75, 192, 192, 0.8)',
-                'rgba(153, 102, 255, 0.8)',
-                'rgba(255, 159, 64, 0.8)',
-                'rgba(199, 199, 199, 0.8)',
-                'rgba(83, 102, 255, 0.8)',
-                'rgba(40, 159, 64, 0.8)',
-                'rgba(210, 199, 199, 0.8)',
-            ];
 
             const commonOptions = {
                 responsive: true,
@@ -1748,9 +1799,11 @@
 
             // Jobs Chart
             const jobsCtx = document.getElementById('jobsChart').getContext('2d');
+            const userColorsList = labels.map(u => getUserColor(u));
             if (jobsChart) {
                 jobsChart.data.labels = labels;
                 jobsChart.data.datasets[0].data = jobsData;
+                jobsChart.data.datasets[0].backgroundColor = userColorsList;
                 jobsChart.update();
             } else {
                 jobsChart = new Chart(jobsCtx, {
@@ -1759,7 +1812,7 @@
                         labels: labels,
                         datasets: [{
                             data: jobsData,
-                            backgroundColor: colors,
+                            backgroundColor: userColorsList,
                             borderRadius: 5
                         }]
                     },
@@ -1772,6 +1825,7 @@
             if (timeChart) {
                 timeChart.data.labels = labels;
                 timeChart.data.datasets[0].data = timeData;
+                timeChart.data.datasets[0].backgroundColor = userColorsList;
                 timeChart.update();
             } else {
                 timeChart = new Chart(timeCtx, {
@@ -1780,7 +1834,7 @@
                         labels: labels,
                         datasets: [{
                             data: timeData,
-                            backgroundColor: colors,
+                            backgroundColor: userColorsList,
                             borderRadius: 5
                         }]
                     },
@@ -1792,9 +1846,11 @@
             const serverLabels = Object.keys(serverStats);
             const serverData = Object.values(serverStats);
             const pieCtx = document.getElementById('serverPieChart').getContext('2d');
+            const serverColors = serverLabels.map((_, i) => `hsl(${(i * 137.5) % 360}, 70%, 60%)`);
             if (serverPieChart) {
                 serverPieChart.data.labels = serverLabels;
                 serverPieChart.data.datasets[0].data = serverData;
+                serverPieChart.data.datasets[0].backgroundColor = serverColors;
                 serverPieChart.update();
             } else {
                 serverPieChart = new Chart(pieCtx, {
@@ -1803,7 +1859,7 @@
                         labels: serverLabels,
                         datasets: [{
                             data: serverData,
-                            backgroundColor: colors,
+                            backgroundColor: serverColors,
                             borderWidth: 0
                         }]
                     },
@@ -1820,93 +1876,157 @@
                 });
             }
 
-            // Timeline Chart (Last 24h)
-            const timelineData = Array(24).fill(0);
-            const now = Date.now() / 1000;
-            const hourLabels = [];
-            for (let i = 23; i >= 0; i--) {
-                const d = new Date((now - i * 3600) * 1000);
-                hourLabels.push(d.getHours() + ':00');
-            }
-
-            history.forEach(job => {
-                const diffHours = Math.floor((now - job.end_time) / 3600);
-                if (diffHours >= 0 && diffHours < 24) {
-                    timelineData[23 - diffHours]++;
-                }
-            });
-
-            const timelineCtx = document.getElementById('timelineChart').getContext('2d');
-
-            // Create Gradient
-            const gradient = timelineCtx.createLinearGradient(0, 0, 0, 400);
-            gradient.addColorStop(0, 'rgba(0, 123, 255, 0.5)');
-            gradient.addColorStop(1, 'rgba(0, 123, 255, 0)');
-
-
             // Timeline Logic Based on View Type
             const viewType = document.getElementById('analytics-view-type').value;
             let timeLabels = [];
-            let timeValues = [];
-            let chartLabel = "Jobs";
+            let jobsValues = [];
+            let sessionsPerUser = {}; // user -> array of values
+
+            const d = currentAnalyticsDate;
 
             if (viewType === 'daily') {
-                timeValues = Array(24).fill(0);
                 for (let i = 0; i < 24; i++) timeLabels.push(i + ':00');
+                jobsValues = Array(24).fill(0);
                 history.forEach(job => {
                     const h = new Date(job.end_time * 1000).getHours();
-                    timeValues[h]++;
+                    jobsValues[h]++;
                 });
+
+                // Session active minutes per hour
+                const users = [...new Set(sessions.map(s => s.user))];
+                users.forEach(user => {
+                    sessionsPerUser[user] = Array(24).fill(0);
+                    const userSess = sessions.filter(s => s.user === user);
+                    for (let h = 0; h < 24; h++) {
+                        const hStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h).getTime() / 1000;
+                        const hEnd = hStart + 3600;
+                        userSess.forEach(s => {
+                            const overlap = Math.max(0, Math.min(s.end_time, hEnd) - Math.max(s.start_time, hStart));
+                            sessionsPerUser[user][h] += overlap / 60; // in minutes
+                        });
+                    }
+                });
+
             } else if (viewType === 'monthly') {
-                const daysInMonth = new Date(currentAnalyticsDate.getFullYear(), currentAnalyticsDate.getMonth() + 1, 0).getDate();
-                timeValues = Array(daysInMonth).fill(0);
+                const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
                 for (let i = 1; i <= daysInMonth; i++) timeLabels.push(i);
+                jobsValues = Array(daysInMonth).fill(0);
                 history.forEach(job => {
-                    const d = new Date(job.end_time * 1000).getDate();
-                    timeValues[d-1]++;
+                    const day = new Date(job.end_time * 1000).getDate();
+                    jobsValues[day-1]++;
                 });
+
+                const users = [...new Set(sessions.map(s => s.user))];
+                users.forEach(user => {
+                    sessionsPerUser[user] = Array(daysInMonth).fill(0);
+                    const userSess = sessions.filter(s => s.user === user);
+                    for (let day = 1; day <= daysInMonth; day++) {
+                        const dStart = new Date(d.getFullYear(), d.getMonth(), day).getTime() / 1000;
+                        const dEnd = dStart + 86400;
+                        userSess.forEach(s => {
+                            const overlap = Math.max(0, Math.min(s.end_time, dEnd) - Math.max(s.start_time, dStart));
+                            sessionsPerUser[user][day-1] += overlap / 3600; // in hours
+                        });
+                    }
+                });
+
             } else if (viewType === 'yearly') {
-                timeValues = Array(12).fill(0);
                 timeLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                jobsValues = Array(12).fill(0);
                 history.forEach(job => {
                     const m = new Date(job.end_time * 1000).getMonth();
-                    timeValues[m]++;
+                    jobsValues[m]++;
+                });
+
+                const users = [...new Set(sessions.map(s => s.user))];
+                users.forEach(user => {
+                    sessionsPerUser[user] = Array(12).fill(0);
+                    const userSess = sessions.filter(s => s.user === user);
+                    for (let m = 0; m < 12; m++) {
+                        const mStart = new Date(d.getFullYear(), m, 1).getTime() / 1000;
+                        const mEnd = new Date(d.getFullYear(), m + 1, 1).getTime() / 1000;
+                        userSess.forEach(s => {
+                            const overlap = Math.max(0, Math.min(s.end_time, mEnd) - Math.max(s.start_time, mStart));
+                            sessionsPerUser[user][m] += overlap / 3600; // in hours
+                        });
+                    }
                 });
             }
 
+            const timelineCtx = document.getElementById('timelineChart').getContext('2d');
+            const datasets = [];
+
+            // Session Duration Area Datasets (Background)
+            Object.entries(sessionsPerUser).forEach(([user, values]) => {
+                datasets.push({
+                    label: `${user} Active`,
+                    data: values,
+                    backgroundColor: getUserColor(user),
+                    borderColor: 'transparent',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0,
+                    yAxisID: 'ySession'
+                });
+            });
+
+            // Jobs Line Dataset (Foreground - On top)
+            datasets.push({
+                label: 'Jobs Executed',
+                data: jobsValues,
+                borderColor: '#007bff',
+                borderWidth: 3,
+                backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                fill: false,
+                tension: 0.4,
+                pointRadius: 4,
+                pointBackgroundColor: '#007bff',
+                yAxisID: 'yJobs'
+            });
+
             if (timelineChart) {
                 timelineChart.data.labels = timeLabels;
-                timelineChart.data.datasets[0].data = timeValues;
-                timelineChart.data.datasets[0].backgroundColor = gradient;
+                timelineChart.data.datasets = datasets;
                 timelineChart.update();
             } else {
                 timelineChart = new Chart(timelineCtx, {
                     type: 'line',
                     data: {
                         labels: timeLabels,
-                        datasets: [{
-                            label: chartLabel,
-                            data: timeValues,
-                            borderColor: '#007bff',
-                            borderWidth: 3,
-                            backgroundColor: gradient,
-                            fill: true,
-                            tension: 0.4,
-                            pointRadius: 4,
-                            pointBackgroundColor: '#007bff',
-                            pointHoverRadius: 6
-                        }]
+                        datasets: datasets
                     },
                     options: {
                         ...commonOptions,
                         plugins: {
-                            legend: { display: false },
+                            legend: { display: true, labels: { color: '#aaa', boxWidth: 10 } },
                             tooltip: {
+                                mode: 'index',
+                                intersect: false,
                                 backgroundColor: 'rgba(0,0,0,0.8)',
-                                padding: 10,
-                                titleColor: '#007bff',
-                                bodyColor: '#fff',
-                                displayColors: false
+                                padding: 10
+                            }
+                        },
+                        scales: {
+                            yJobs: {
+                                type: 'linear',
+                                position: 'left',
+                                beginAtZero: true,
+                                title: { display: true, text: 'Jobs Count', color: '#007bff' },
+                                grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                                ticks: { color: '#aaa' }
+                            },
+                            ySession: {
+                                type: 'linear',
+                                position: 'right',
+                                beginAtZero: true,
+                                stacked: true,
+                                title: { display: true, text: viewType === 'daily' ? 'Minutes Active' : 'Hours Active', color: '#28a745' },
+                                grid: { display: false },
+                                ticks: { color: '#aaa' }
+                            },
+                            x: {
+                                grid: { display: false },
+                                ticks: { color: '#aaa' }
                             }
                         }
                     }

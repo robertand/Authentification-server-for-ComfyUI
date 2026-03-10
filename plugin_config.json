@@ -4,5 +4,5 @@
     "servers": [],
     "admin_port": 8201,
     "cookie_secret": "REPLACE_WITH_RANDOM_SECRET",
-    "admin_password": "admin"
+    "admin_password": "$2b$12$pg.lnkW4Eog4r9QVv/qm2.ZzQmqiP0Fs72xXNtFuiM5Uc03qGMRUq"
 }

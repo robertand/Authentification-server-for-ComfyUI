@@ -206,7 +206,12 @@ WORKFLOW_ROOT_DIR = "/mnt/prouser/spatiu/ComfyUI/workflows"
 
 # === USAGE TRACKING ===
 USAGE_STATS_FILE = "comfyui_usage_stats.json"
-USAGE_STATS = {"active_jobs": {}, "history": []}
+USAGE_STATS = {
+    "active_jobs": {},
+    "history": [],
+    "active_sessions": {},
+    "session_history": []
+}
 
 def load_usage_stats():
     global USAGE_STATS
@@ -215,6 +220,7 @@ def load_usage_stats():
             with open(USAGE_STATS_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 USAGE_STATS["history"] = data.get("history", [])[-1000:] # Keep last 1000
+                USAGE_STATS["session_history"] = data.get("session_history", [])[-1000:] # Keep last 1000
                 log.info("✓ Usage stats loaded")
         except:
             log.error("Failed to load usage stats")
@@ -222,7 +228,10 @@ def load_usage_stats():
 def save_usage_stats():
     try:
         with open(USAGE_STATS_FILE, 'w', encoding='utf-8') as f:
-            json.dump({"history": USAGE_STATS["history"]}, f, indent=2)
+            json.dump({
+                "history": USAGE_STATS["history"],
+                "session_history": USAGE_STATS["session_history"]
+            }, f, indent=2)
     except:
         pass
 
@@ -243,6 +252,23 @@ def record_job_end(prompt_id):
         USAGE_STATS["history"].append(job)
         save_usage_stats()
         log.info(f"Job finished: {prompt_id} (Duration: {job['duration']:.2f}s)")
+
+def record_session_start(user, session_id):
+    USAGE_STATS["active_sessions"][session_id] = {
+        "user": user,
+        "start_time": time.time(),
+        "session_id": session_id
+    }
+    log.info(f"Session started for {user}: {session_id}")
+
+def record_session_end(session_id):
+    if session_id in USAGE_STATS["active_sessions"]:
+        sess = USAGE_STATS["active_sessions"].pop(session_id)
+        sess["end_time"] = time.time()
+        sess["duration"] = sess["end_time"] - sess["start_time"]
+        USAGE_STATS["session_history"].append(sess)
+        save_usage_stats()
+        log.info(f"Session ended for {sess['user']} (Duration: {sess['duration']:.2f}s)")
 
 # Create chat files directory if it doesn't exist
 if not os.path.exists(CHAT_FILES_DIR):
@@ -582,6 +608,7 @@ def cleanup_sessions():
                     USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
     
     for session_id in expired_sessions:
+        record_session_end(session_id)
         del sessions[session_id]
 
 def cleanup_admin_sessions():
@@ -647,6 +674,7 @@ def create_session(username):
         "created": time.time()
     }
     USERS[username]["instances"] += 1
+    record_session_start(username, session_id)
     return session_id
 
 def create_admin_session():
@@ -897,6 +925,8 @@ class LogoutHandler(BaseHandler):
                 username = sessions[session_id].get("user", "Unknown")
                 if username in USERS:
                     USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
+
+                record_session_end(session_id)
                 del sessions[session_id]
                 log.info(f"User {username} logged out")
         
@@ -1661,6 +1691,7 @@ class AdminSessionsHandler(BaseHandler):
             FORCED_LOGOUT_SESSIONS.add(session_id)
             
             BLOCKED_USERS[username] = time.time() + 300
+            record_session_end(session_id)
             del sessions[session_id]
             log.info(f"Admin forced logout for session {session_id}, user {username} blocked for 5 minutes")
         
@@ -2472,7 +2503,8 @@ class MultiInstanceProxyHandler(BaseHandler):
         
         # Verifică expirarea sesiunii
         if session_id:
-            session_data = get_session(session_id.decode())
+            session_id_val = session_id.decode()
+            session_data = get_session(session_id_val)
             if session_data:
                 username = session_data["user"]
                 user_timeout = USERS.get(username, {}).get("session_timeout", 60)
@@ -2482,7 +2514,8 @@ class MultiInstanceProxyHandler(BaseHandler):
                     if time.time() - session_data["created"] > timeout_seconds:
                         if username in USERS:
                             USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
-                        del sessions[session_id.decode()]
+                        record_session_end(session_id_val)
+                        del sessions[session_id_val]
                         self.clear_cookie("session_id", path="/")
                         self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
                         return
