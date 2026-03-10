@@ -19,6 +19,7 @@ import uuid
 import re
 import socket
 import base64
+import bcrypt
 from urllib.parse import urlparse, urlunparse, quote, unquote
 
 # === LOGGING ===
@@ -66,6 +67,11 @@ def save_config(conf):
         log.error(f"Eroare la salvarea configurației: {e}")
 
 config = load_config()
+
+# Hash plaintext password in config if needed
+if "admin_password" in config and not config["admin_password"].startswith("$2b$"):
+    config["admin_password"] = bcrypt.hashpw(config["admin_password"].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
 save_config(config)
 
 # === SESSION STORAGE ===
@@ -323,7 +329,7 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
         if not session:
             # Dacă nu suntem logați, verificăm dacă e o cerere API sau de browser
             # path este restul URL-ului după aggregator-root/
-            if path and path.startswith(('api/', 'view/', 'upload/', 'websocket')):
+            if path and path.startswith(('comfy/api/', 'comfy/view/', 'comfy/upload/', 'comfy/websocket')):
                 self.set_status(401)
                 self.write({"error": "Sesiune aggregator inexistentă sau expirată"})
                 return
@@ -569,7 +575,9 @@ class AdminBaseHandler(tornado.web.RequestHandler):
 class AdminLoginHandler(AdminBaseHandler):
     def get(self): self.render("plugin_admin_login.html", error="")
     def post(self):
-        if self.get_argument("password", "") == config.get("admin_password", "admin"):
+        password = self.get_argument("password", "")
+        hashed = config.get("admin_password", "")
+        if hashed and bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8')):
             self.set_secure_cookie("agg_admin_session", "logged_in")
             self.redirect("/admin")
         else: self.render("plugin_admin_login.html", error="Invalid password")
