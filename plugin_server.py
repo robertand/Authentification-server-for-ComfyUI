@@ -620,9 +620,15 @@ class AggregatorRootHandler(AggregatorBaseHandler):
 class AdminRootHandler(AdminBaseHandler):
     def get(self): self.redirect("/admin")
 
+class AggregatorHealthHandler(AggregatorBaseHandler):
+    def get(self):
+        self.set_header("Content-Type", "application/json")
+        self.write({"status": "ok", "plugin": config["plugin_name"], "servers_enrolled": len(config["servers"])})
+
 def make_aggregator_app():
     return tornado.web.Application([
         (r"/", AggregatorRootHandler),
+        (r"/health", AggregatorHealthHandler),
         (r"/dashboard", AggregatorDashboardHandler),
         (r"/login", AggregatorLoginHandler),
         (r"/logout", AggregatorLogoutHandler),

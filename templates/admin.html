@@ -302,7 +302,8 @@
             margin-bottom: 20px;
         }
         .pdf-page-break {
-            page-break-before: always;
+            page-break-before: always !important;
+            break-before: always !important;
         }
 
         /* PDF Mode Adjustments */
@@ -313,6 +314,11 @@
             break-inside: avoid !important;
             margin-bottom: 30px !important;
             border: 1px solid #444 !important;
+            overflow: visible !important;
+        }
+        .pdf-mode canvas {
+            max-width: 100% !important;
+            height: auto !important;
         }
         .pdf-mode .status-grid {
             display: block !important;
@@ -608,12 +614,12 @@
                     </div>
                 </div>
 
-                <div class="nginx-section pdf-avoid-break">
+                <div class="nginx-section pdf-avoid-break pdf-page-break">
                     <h3 id="timeline-chart-title" style="margin-top:0;">Activity Timeline</h3>
                     <canvas id="timelineChart"></canvas>
                 </div>
 
-                <div class="nginx-section pdf-avoid-break">
+                <div class="nginx-section pdf-avoid-break pdf-page-break">
                     <h3 style="margin-top:0;">Server Distribution</h3>
                     <div id="total-hours-display" style="text-align: center; margin-bottom: 10px; font-weight: bold; color: #28a745;"></div>
                     <div style="max-height: 300px; display: flex; justify-content: center;">
