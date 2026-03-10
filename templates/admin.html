@@ -4,6 +4,7 @@
     <title>ComfyUI Admin</title>
     <meta charset="utf-8">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 20px; background: #1a1a1a; color: #e0e0e0; }
         .container { max-width: 1200px; margin: 0 auto; }
@@ -369,7 +370,7 @@
             <div class="tab active" onclick="showTab('status')">Status</div>
             <div class="tab" onclick="showTab('settings')">Settings</div>
             <div class="tab" onclick="showTab('nginx')">Nginx Auth</div>
-            <div class="tab" onclick="showTab('usage')">Utilizare</div>
+            <div class="tab" onclick="showTab('analytics')">Analytics</div>
             <div class="tab" onclick="showTab('security')">Security</div>
             <div class="tab" onclick="showTab('chat')">Chat</div>
         </div>
@@ -537,77 +538,97 @@
             <div id="passwordMessage" style="margin-top: 15px;"></div>
         </div>
 
-        <div id="usage" class="tab-content">
-            <h2>Harta Utilizării Sistemului</h2>
+        <div id="analytics" class="tab-content">
+            <div id="pdf-export-container">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 style="margin:0;">System Usage Analytics</h2>
+                    <div id="analytics-date-display" style="font-size: 18px; font-weight: bold; color: #007bff;"></div>
+                </div>
 
-            <div class="nginx-section" style="display: flex; gap: 20px; flex-wrap: wrap;">
-                <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                    <h3 style="margin-top:0;">Joburi per Utilizator</h3>
-                    <canvas id="jobsChart"></canvas>
+                <div class="nginx-section" style="display: flex; gap: 10px; align-items: center; background: #333;">
+                    <button onclick="changeAnalyticsDate(-1)">← Previous Day</button>
+                    <button onclick="setAnalyticsDate('today')">Today</button>
+                    <button onclick="changeAnalyticsDate(1)">Next Day →</button>
+                    <div style="margin-left: 20px;">
+                        <select id="analytics-view-type" style="width: 150px;" onchange="updateAnalyticsView()">
+                            <option value="daily">Daily View</option>
+                            <option value="monthly">Monthly View</option>
+                            <option value="yearly">Yearly View</option>
+                        </select>
+                    </div>
+                    <button class="security" onclick="exportToPDF()" style="margin-left: auto;">Export to PDF</button>
                 </div>
-                <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                    <h3 style="margin-top:0;">Timp Total per Utilizator (sec)</h3>
-                    <canvas id="timeChart"></canvas>
-                </div>
-                <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                    <h3 style="margin-top:0;">Activitate în Timp (Ultimele 24h)</h3>
-                    <canvas id="timelineChart"></canvas>
-                </div>
-                <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                    <h3 style="margin-top:0;">Distribuție per Server</h3>
-                    <div style="max-height: 300px; display: flex; justify-content: center;">
-                        <canvas id="serverPieChart"></canvas>
+
+                <div class="nginx-section" style="display: flex; gap: 20px; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
+                        <h3 style="margin-top:0;">Jobs per User</h3>
+                        <canvas id="jobsChart"></canvas>
+                    </div>
+                    <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
+                        <h3 style="margin-top:0;">Total Time per User</h3>
+                        <canvas id="timeChart"></canvas>
+                    </div>
+                    <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
+                        <h3 id="timeline-chart-title" style="margin-top:0;">Activity Timeline</h3>
+                        <canvas id="timelineChart"></canvas>
+                    </div>
+                    <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
+                        <h3 style="margin-top:0;">Server Distribution</h3>
+                        <div id="total-hours-display" style="text-align: center; margin-bottom: 10px; font-weight: bold; color: #28a745;"></div>
+                        <div style="max-height: 300px; display: flex; justify-content: center;">
+                            <canvas id="serverPieChart"></canvas>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <div class="nginx-section">
-                <h3>Joburi Active (Real-time)</h3>
-                <div id="activeJobsGrid" class="status-grid">
-                    <!-- Joburi active aici -->
+                <div class="nginx-section">
+                    <h3>Active Jobs (Real-time)</h3>
+                    <div id="activeJobsGrid" class="status-grid">
+                        <!-- Active jobs here -->
+                    </div>
+                </div>
+
+                <div class="nginx-section">
+                    <h3>Detailed User Statistics</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>User</th>
+                                <th>Total Jobs</th>
+                                <th>Total Time</th>
+                                <th>Average Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="userStatsTable">
+                            <!-- User stats here -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="nginx-section">
+                    <h3>Server Statistics</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Server URL</th>
+                                <th>Jobs Processed</th>
+                            </tr>
+                        </thead>
+                        <tbody id="serverStatsTable">
+                            <!-- Server stats here -->
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
             <div class="nginx-section">
-                <h3>Statistici detaliate per Utilizator</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Utilizator</th>
-                            <th>Total Joburi</th>
-                            <th>Timp Total (sec)</th>
-                            <th>Media (sec)</th>
-                        </tr>
-                    </thead>
-                    <tbody id="userStatsTable">
-                        <!-- Statistici useri aici -->
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="nginx-section">
-                <h3>Statistici per Server</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Server URL</th>
-                            <th>Joburi Procesate</th>
-                        </tr>
-                    </thead>
-                    <tbody id="serverStatsTable">
-                        <!-- Statistici servere aici -->
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="nginx-section">
-                <h3>Istoric Recent</h3>
+                <h3>Recent History</h3>
                 <div id="usageHistory" style="max-height: 400px; overflow-y: auto; background: #111; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px;">
-                    <!-- Istoric aici -->
+                    <!-- History here -->
                 </div>
             </div>
 
-            <button onclick="loadUsageStats()">Actualizează Date</button>
+            <button onclick="loadUsageStats()">Refresh Data</button>
         </div>
 
         <div id="chat" class="tab-content">
@@ -657,6 +678,9 @@
         let timelineChart = null;
         let serverPieChart = null;
 
+        let currentAnalyticsDate = new Date();
+        let usageHistoryData = [];
+
         function showTab(tabName) {
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -671,7 +695,7 @@
             } else if (tabName === 'nginx') {
                 loadGlobalNginxAuth();
                 loadNginxUsersList();
-            } else if (tabName === 'usage') {
+            } else if (tabName === 'analytics') {
                 loadUsageStats();
             } else {
                 stopAdminChatAutoRefresh();
@@ -1532,10 +1556,84 @@
             fetch('/admin/api/usage-stats')
                 .then(r => r.json())
                 .then(data => {
+                    usageHistoryData = data.history;
                     updateActiveJobs(data.active_jobs);
-                    updateStatsTables(data.history);
+                    updateAnalyticsView();
                     updateUsageHistory(data.history);
                 });
+        }
+
+        function setAnalyticsDate(type) {
+            if (type === 'today') {
+                currentAnalyticsDate = new Date();
+            }
+            updateAnalyticsView();
+        }
+
+        function changeAnalyticsDate(days) {
+            const viewType = document.getElementById('analytics-view-type').value;
+            if (viewType === 'daily') {
+                currentAnalyticsDate.setDate(currentAnalyticsDate.getDate() + days);
+            } else if (viewType === 'monthly') {
+                currentAnalyticsDate.setMonth(currentAnalyticsDate.getMonth() + days);
+            } else if (viewType === 'yearly') {
+                currentAnalyticsDate.setFullYear(currentAnalyticsDate.getFullYear() + days);
+            }
+            updateAnalyticsView();
+        }
+
+        function updateAnalyticsView() {
+            const viewType = document.getElementById('analytics-view-type').value;
+            const dateDisplay = document.getElementById('analytics-date-display');
+            const timelineTitle = document.getElementById('timeline-chart-title');
+
+            let filteredHistory = [];
+            const d = currentAnalyticsDate;
+
+            if (viewType === 'daily') {
+                const dayStr = d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                dateDisplay.textContent = dayStr;
+                timelineTitle.textContent = 'Hourly Activity';
+
+                filteredHistory = usageHistoryData.filter(job => {
+                    const jobDate = new Date(job.end_time * 1000);
+                    return jobDate.getFullYear() === d.getFullYear() &&
+                           jobDate.getMonth() === d.getMonth() &&
+                           jobDate.getDate() === d.getDate();
+                });
+            } else if (viewType === 'monthly') {
+                const monthStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+                dateDisplay.textContent = monthStr;
+                timelineTitle.textContent = 'Daily Activity';
+
+                filteredHistory = usageHistoryData.filter(job => {
+                    const jobDate = new Date(job.end_time * 1000);
+                    return jobDate.getFullYear() === d.getFullYear() &&
+                           jobDate.getMonth() === d.getMonth();
+                });
+            } else if (viewType === 'yearly') {
+                dateDisplay.textContent = d.getFullYear();
+                timelineTitle.textContent = 'Monthly Activity';
+
+                filteredHistory = usageHistoryData.filter(job => {
+                    const jobDate = new Date(job.end_time * 1000);
+                    return jobDate.getFullYear() === d.getFullYear();
+                });
+            }
+
+            updateStatsTables(filteredHistory);
+        }
+
+        function formatDuration(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+
+            let res = "";
+            if (hours > 0) res += hours + "h ";
+            if (minutes > 0 || hours > 0) res += minutes + "m ";
+            res += secs + "s";
+            return res;
         }
 
         function updateActiveJobs(activeJobs) {
@@ -1565,12 +1663,14 @@
         function updateStatsTables(history) {
             const userStats = {};
             const serverStats = {};
+            let grandTotalSeconds = 0;
 
             history.forEach(job => {
                 // Per User
                 if (!userStats[job.user]) userStats[job.user] = { count: 0, time: 0 };
                 userStats[job.user].count++;
                 userStats[job.user].time += job.duration;
+                grandTotalSeconds += job.duration;
 
                 // Per Server
                 if (!serverStats[job.server]) serverStats[job.server] = 0;
@@ -1578,6 +1678,10 @@
             });
 
             const sortedUsers = Object.entries(userStats).sort((a,b) => b[1].count - a[1].count);
+
+            // Total hours accumulated
+            const totalHours = (grandTotalSeconds / 3600).toFixed(2);
+            document.getElementById('total-hours-display').textContent = `Total Accumulated: ${totalHours} Hours`;
 
             // Fill User Table
             const userTable = document.getElementById('userStatsTable');
@@ -1587,8 +1691,8 @@
                 row.innerHTML = `
                     <td>${user}</td>
                     <td>${stats.count}</td>
-                    <td>${stats.time.toFixed(1)}</td>
-                    <td>${(stats.time / stats.count).toFixed(1)}</td>
+                    <td>${formatDuration(stats.time)}</td>
+                    <td>${formatDuration(stats.time / stats.count)}</td>
                 `;
                 userTable.appendChild(row);
             });
@@ -1609,7 +1713,7 @@
         function updateCharts(sortedUsers, serverStats, history) {
             const labels = sortedUsers.map(u => u[0]);
             const jobsData = sortedUsers.map(u => u[1].count);
-            const timeData = sortedUsers.map(u => u[1].time);
+            const timeData = sortedUsers.map(u => u[1].time / 60); // In minutes
 
             const colors = [
                 'rgba(255, 99, 132, 0.8)',
@@ -1739,19 +1843,50 @@
             gradient.addColorStop(0, 'rgba(0, 123, 255, 0.5)');
             gradient.addColorStop(1, 'rgba(0, 123, 255, 0)');
 
+
+            // Timeline Logic Based on View Type
+            const viewType = document.getElementById('analytics-view-type').value;
+            let timeLabels = [];
+            let timeValues = [];
+            let chartLabel = "Jobs";
+
+            if (viewType === 'daily') {
+                timeValues = Array(24).fill(0);
+                for (let i = 0; i < 24; i++) timeLabels.push(i + ':00');
+                history.forEach(job => {
+                    const h = new Date(job.end_time * 1000).getHours();
+                    timeValues[h]++;
+                });
+            } else if (viewType === 'monthly') {
+                const daysInMonth = new Date(currentAnalyticsDate.getFullYear(), currentAnalyticsDate.getMonth() + 1, 0).getDate();
+                timeValues = Array(daysInMonth).fill(0);
+                for (let i = 1; i <= daysInMonth; i++) timeLabels.push(i);
+                history.forEach(job => {
+                    const d = new Date(job.end_time * 1000).getDate();
+                    timeValues[d-1]++;
+                });
+            } else if (viewType === 'yearly') {
+                timeValues = Array(12).fill(0);
+                timeLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                history.forEach(job => {
+                    const m = new Date(job.end_time * 1000).getMonth();
+                    timeValues[m]++;
+                });
+            }
+
             if (timelineChart) {
-                timelineChart.data.labels = hourLabels;
-                timelineChart.data.datasets[0].data = timelineData;
+                timelineChart.data.labels = timeLabels;
+                timelineChart.data.datasets[0].data = timeValues;
                 timelineChart.data.datasets[0].backgroundColor = gradient;
                 timelineChart.update();
             } else {
                 timelineChart = new Chart(timelineCtx, {
                     type: 'line',
                     data: {
-                        labels: hourLabels,
+                        labels: timeLabels,
                         datasets: [{
-                            label: 'Joburi',
-                            data: timelineData,
+                            label: chartLabel,
+                            data: timeValues,
                             borderColor: '#007bff',
                             borderWidth: 3,
                             backgroundColor: gradient,
@@ -1788,8 +1923,30 @@
                 const timeStr = new Date(job.end_time * 1000).toLocaleString();
                 const p = document.createElement('p');
                 p.style.margin = '2px 0';
-                p.innerHTML = `<span style="color: #28a745;">[${timeStr}]</span> <strong>${job.user}</strong> a finalizat job pe ${job.server} (${job.duration.toFixed(1)}s)`;
+                p.innerHTML = `<span style="color: #28a745;">[${timeStr}]</span> <strong>${job.user}</strong> finished job on ${job.server} (${job.duration.toFixed(1)}s)`;
                 logDiv.appendChild(p);
+            });
+        }
+
+        function exportToPDF() {
+            const element = document.getElementById('pdf-export-container');
+            const viewType = document.getElementById('analytics-view-type').value;
+            const dateStr = document.getElementById('analytics-date-display').textContent;
+
+            const opt = {
+                margin:       10,
+                filename:     `Usage_Report_${viewType}_${dateStr.replace(/ /g, '_')}.pdf`,
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, backgroundColor: '#1a1a1a' },
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+
+            // Temporary adjust styles for PDF
+            const originalStyle = element.style.color;
+            element.style.color = '#fff';
+
+            html2pdf().set(opt).from(element).save().then(() => {
+                element.style.color = originalStyle;
             });
         }
 
