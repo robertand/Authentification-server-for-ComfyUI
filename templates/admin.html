@@ -310,7 +310,7 @@
         }
         .pdf-mode .pdf-spacer {
             display: block !important;
-            height: 70mm !important;
+            height: 5mm !important;
         }
 
         /* PDF Mode Adjustments */
@@ -615,32 +615,35 @@
 
                 <div class="nginx-section pdf-avoid-break" style="display: flex; gap: 20px; flex-wrap: wrap;">
                     <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                        <h3 style="margin-top:0;">Jobs per User</h3>
+                        <h3 style="margin-top:0;">Număr Joburi Executate</h3>
                         <canvas id="jobsChart"></canvas>
                     </div>
                     <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                        <h3 style="margin-top:0;">Server Occupancy per User (Session Time)</h3>
+                        <h3 style="margin-top:0;">Timp Petrecut (Utilizator Logat)</h3>
                         <canvas id="timeChart"></canvas>
                     </div>
                 </div>
 
-                <div class="pdf-page-break pdf-spacer"></div>
-                <div class="nginx-section pdf-avoid-break">
-                    <h3 id="timeline-chart-title" style="margin-top:0;">Activity Timeline</h3>
-                    <canvas id="timelineChart"></canvas>
+                <div class="pdf-page-break" style="height: 5px;"></div>
+                <div class="nginx-section pdf-avoid-break" style="margin-top: 0;">
+                    <h3 id="timeline-chart-title" style="margin-top:0;">Cronologie Activitate (Utilizare Server)</h3>
+                    <div style="height: 400px; width: 100%;">
+                        <canvas id="timelineChart"></canvas>
+                    </div>
                 </div>
-                <div class="pdf-spacer"></div>
 
-                <div class="nginx-section pdf-avoid-break pdf-page-break">
+                <div class="pdf-page-break" style="height: 5px;"></div>
+
+                <div class="nginx-section pdf-avoid-break" style="margin-top: 0;">
                     <div style="display: flex; gap: 20px; flex-wrap: wrap;">
                         <div style="flex: 1; min-width: 45%;">
-                            <h3 style="margin-top:0; text-align: center;">Server Job Distribution</h3>
+                            <h3 style="margin-top:0; text-align: center;">Distribuție Joburi per Server</h3>
                             <div style="max-height: 300px; display: flex; justify-content: center;">
                                 <canvas id="serverPieChart"></canvas>
                             </div>
                         </div>
                         <div style="flex: 1; min-width: 45%;">
-                            <h3 style="margin-top:0; text-align: center;">User Occupancy Distribution</h3>
+                            <h3 style="margin-top:0; text-align: center;">Timp Total Logat (Timpul petrecut cu user-ul deschis)</h3>
                             <div id="total-hours-display" style="text-align: center; margin-bottom: 10px; font-weight: bold; color: #28a745;"></div>
                             <div style="max-height: 300px; display: flex; justify-content: center;">
                                 <canvas id="occupancyPieChart"></canvas>
@@ -2173,7 +2176,7 @@
                                 type: 'linear',
                                 position: 'left',
                                 beginAtZero: true,
-                                title: { display: true, text: 'Jobs Count', color: '#007bff' },
+                                title: { display: true, text: 'Număr Joburi', color: '#007bff' },
                                 grid: { color: 'rgba(255, 255, 255, 0.1)' },
                                 ticks: { color: '#aaa' }
                             },
@@ -2182,7 +2185,7 @@
                                 position: 'right',
                                 beginAtZero: true,
                                 stacked: true,
-                                title: { display: true, text: viewType === 'daily' ? 'Minutes Active' : 'Hours Active', color: '#28a745' },
+                                title: { display: true, text: viewType === 'daily' ? 'Minute Active' : 'Ore Active', color: '#28a745' },
                                 grid: { display: false },
                                 ticks: { color: '#aaa' }
                             },

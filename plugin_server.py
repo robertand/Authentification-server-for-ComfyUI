@@ -217,7 +217,7 @@ class AggregatorLoginHandler(AggregatorBaseHandler):
                 # Redirect direct la comfy după login reușit
                 self.redirect("/comfy/")
             else:
-                log.warning(f"Login failed for {username} on {server_url}. Code: {response.code}, Session found: {bool(auth_session_id)}")
+                log.warning(f"Login failed for {username} on {server_url}. Code: {response.code}, Session found: {bool(signed_session_id)}")
                 self.render("plugin_login.html", plugin_name=config["plugin_name"], username=username, server_url=server_url, error="Invalid credentials or server error")
         except Exception as e:
             log.error(f"Login error for {server_url}: {e}")

@@ -1611,7 +1611,7 @@ class AdminUsageStatsHandler(BaseHandler):
         authorized = False
 
         if admin_pass_header:
-            expected_pass = config.get("admin_password", "admin123")
+            expected_pass = ADMIN_CONFIG["password"]
             if isinstance(expected_pass, str) and expected_pass.startswith("$2b$"):
                 if bcrypt.checkpw(admin_pass_header.encode(), expected_pass.encode()):
                     authorized = True
@@ -1985,7 +1985,7 @@ class AdminTerminateSessionHandler(tornado.web.RequestHandler):
             admin_pass = data.get("admin_password")
             session_id = data.get("session_id")
 
-            expected_pass = config.get("admin_password", "admin123")
+            expected_pass = ADMIN_CONFIG["password"]
             authorized = False
             if isinstance(expected_pass, str) and expected_pass.startswith("$2b$"):
                 if admin_pass and bcrypt.checkpw(admin_pass.encode(), expected_pass.encode()):
@@ -3364,6 +3364,7 @@ def make_auth_app():
     return tornado.web.Application([
         # Auth routes
         (r"/login", LoginHandler),
+        (r"/admin/api/usage-stats", AdminUsageStatsHandler),
         (r"/logout", LogoutHandler),
         (r"/user-status", UserStatusHandler),
         (r"/user-settings", UserSettingsHandler),
