@@ -77,6 +77,43 @@ if "admin_password" in config and not config["admin_password"].startswith("$2b$"
 
 save_config(config)
 
+# === SECURITATE - RATE LIMITING ===
+FAILED_ADMIN_ATTEMPTS = {}
+MAX_ATTEMPTS_PER_5MIN = 5
+BLOCK_TIME = 900
+
+class RateLimiter:
+    @staticmethod
+    def is_blocked(ip):
+        if ip in FAILED_ADMIN_ATTEMPTS:
+            data = FAILED_ADMIN_ATTEMPTS[ip]
+            if time.time() - data["reset_time"] > 300:
+                del FAILED_ADMIN_ATTEMPTS[ip]
+                return False
+            if data["count"] >= MAX_ATTEMPTS_PER_5MIN:
+                if time.time() - data["block_time"] < BLOCK_TIME:
+                    return True
+                else:
+                    del FAILED_ADMIN_ATTEMPTS[ip]
+        return False
+
+    @staticmethod
+    def record_failed_attempt(ip):
+        if ip not in FAILED_ADMIN_ATTEMPTS:
+            FAILED_ADMIN_ATTEMPTS[ip] = {
+                "count": 0,
+                "reset_time": time.time() + 300,
+                "block_time": 0
+            }
+        FAILED_ADMIN_ATTEMPTS[ip]["count"] += 1
+        if FAILED_ADMIN_ATTEMPTS[ip]["count"] >= MAX_ATTEMPTS_PER_5MIN:
+            FAILED_ADMIN_ATTEMPTS[ip]["block_time"] = time.time()
+
+    @staticmethod
+    def clear_attempts(ip):
+        if ip in FAILED_ADMIN_ATTEMPTS:
+            del FAILED_ADMIN_ATTEMPTS[ip]
+
 # === SESSION STORAGE ===
 AGG_SESSIONS = {}
 
@@ -254,8 +291,9 @@ class AggregatorLogoutHandler(AggregatorBaseHandler):
                         log.info(f"Sesiune terminată cu succes prin API Admin pe {session['server_url']} pentru {session['user']}")
                     else:
                         log.warning(f"Eroare API terminare (Code {response.code}). Încercăm logout clasic.")
-                        # Fallback la logout normal
-                        logout_url = f"{session['server_url'].rstrip('/')}/logout"
+                        # Fallback la logout normal cu auto-redirect
+                        agg_root = f"{self.request.protocol}://{self.request.host}/"
+                        logout_url = f"{session['server_url'].rstrip('/')}/logout?redirect={quote(agg_root)}"
                         req = tornado.httpclient.HTTPRequest(
                             url=logout_url,
                             method="GET",
@@ -598,15 +636,54 @@ class AggregatorWebSocketProxy(tornado.websocket.WebSocketHandler):
 class AdminBaseHandler(tornado.web.RequestHandler):
     def get_current_user(self): return self.get_secure_cookie("agg_admin_session")
 
+    def get_client_ip(self):
+        forwarded_for = self.request.headers.get("X-Forwarded-For")
+        if forwarded_for: return forwarded_for.split(",")[0].strip()
+        real_ip = self.request.headers.get("X-Real-IP")
+        if real_ip: return real_ip
+        return self.request.remote_ip
+
 class AdminLoginHandler(AdminBaseHandler):
-    def get(self): self.render("plugin_admin_login.html", error="")
+    def get(self):
+        client_ip = self.get_client_ip()
+        if RateLimiter.is_blocked(client_ip):
+            self.write("Too many attempts. Try again later.")
+            return
+
+        about_html = """
+        <div id="aboutDrawer" class="about-drawer">
+            <div class="about-drawer-content">
+                <h2>Aggregator Admin</h2>
+                <p>Consolă de management centralizată pentru servere ComfyUI.</p>
+            </div>
+        </div>
+        """
+        self.render("plugin_admin_login.html", error="", about_modal=about_html)
+
     def post(self):
+        client_ip = self.get_client_ip()
+        if RateLimiter.is_blocked(client_ip):
+            self.set_status(429)
+            return
+
         password = self.get_argument("password", "")
         hashed = config.get("admin_password", "")
+
         if hashed and bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8')):
-            self.set_secure_cookie("agg_admin_session", "logged_in")
+            RateLimiter.clear_attempts(client_ip)
+            self.set_secure_cookie("agg_admin_session", "logged_in", expires_days=1, path="/")
             self.redirect("/admin")
-        else: self.render("plugin_admin_login.html", error="Invalid password")
+        else:
+            RateLimiter.record_failed_attempt(client_ip)
+            about_html = """
+            <div id="aboutDrawer" class="about-drawer">
+                <div class="about-drawer-content">
+                    <h2>Aggregator Admin</h2>
+                    <p>Consolă de management centralizată pentru servere ComfyUI.</p>
+                </div>
+            </div>
+            """
+            self.render("plugin_admin_login.html", error="Invalid password", about_modal=about_html)
 
 class AdminMainHandler(AdminBaseHandler):
     @tornado.web.authenticated

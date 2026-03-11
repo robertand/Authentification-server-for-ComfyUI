@@ -1,15 +1,48 @@
 <!DOCTYPE html>
 <html><head><title>Admin Login</title><meta charset="utf-8">
-<link rel="stylesheet" type="text/css" href="/static/css/login.css">
-</head>
+<link rel="stylesheet" type="text/css" href="/static/css/styles.css">
+<style>
+    body {font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin-top: 100px; background: #1a1a1a; color: #e0e0e0;}
+    .container {width: 350px; margin: 0 auto; background: #2a2a2a; padding: 30px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.5); position: relative; z-index: 1;}
+    .container input, .container button {width: 80%; padding: 12px; margin: 8px; font-size: 16px; border-radius: 5px;}
+    .container input {border: 1px solid #444; background: #333; color: #e0e0e0;}
+    .container button {background: #007bff; color: white; border: none; cursor: pointer;}
+    .container button:hover {background: #0056b3;}
+    .error {color: #ff6b6b; margin-top: 10px;}
+    .info {color: #17a2b8; margin-top: 10px; font-size: 14px;}
+    .about-btn-login {
+        position: fixed;
+        top: 15px;
+        right: 15px;
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 16px;
+        width: 40px;
+        height: 40px;
+        z-index: 1000;
+    }
+    .about-btn-login:hover {
+        background: #0056b3;
+    }
+</style></head>
 <body>
-    <div class="container" style="max-width: 400px; margin-top: 100px;">
-        <div class="login-title">Admin Aggregator</div>
-        <div class="login-subtitle">GESTIUNE CENTRALIZATĂ</div>
+    <button class="about-btn-login" onclick="openAboutModal()">?</button>
+    <div class="container">
+        <h2>Admin Aggregator</h2>
+        <div class="info">Default password: admin</div>
         <form method="post">
-            <input type="password" name="password" placeholder="Parolă Admin" required autofocus style="width: 100%; box-sizing: border-box;"><br>
-            <button type="submit" style="width: 100%; box-sizing: border-box; margin-top: 15px;">Autentificare</button>
+            <input type="password" name="password" placeholder="Admin Password" required><br>
+            <button type="submit">Login</button>
         </form>
-        {% if error %}<p class="error">{{ error }}</p>{% end %}
+        {% if error %}
+            <p class="error">{{ error }}</p>
+        {% end %}
     </div>
-</body></html>
+    {% raw about_modal %}
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

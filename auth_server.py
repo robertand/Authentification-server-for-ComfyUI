@@ -2008,6 +2008,10 @@ class AdminTerminateSessionHandler(tornado.web.RequestHandler):
                 user = sessions[session_id]["user"]
                 log.info(f"Terminare sesiune la distanță: {session_id} pentru utilizatorul {user}")
 
+                # Decrement instance count
+                if user in USERS:
+                    USERS[user]["instances"] = max(0, USERS[user]["instances"] - 1)
+
                 # Închidem WebSocket-urile asociate dacă există
                 if session_id in USER_CHAT_WEBSOCKETS:
                     for ws in list(USER_CHAT_WEBSOCKETS[session_id]):
