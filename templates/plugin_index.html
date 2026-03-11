@@ -30,19 +30,19 @@
     <div class="container">
         <div class="plugin-header">
             <div class="login-title">{{ plugin_name }}</div>
-            <div class="login-subtitle">AGREGATOR MULTI-SERVER</div>
+            <div class="login-subtitle">MULTI-SERVER AGGREGATOR</div>
         </div>
 
         <div class="user-status-container">
-            <div class="user-status-title">Toți Utilizatorii Disponibili</div>
+            <div class="user-status-title">All Available Users</div>
             <div class="user-status-grid" id="aggregatedUserGrid">
-                <!-- Useri vor fi încărcați aici -->
-                <div style="grid-column: 1/-1; text-align: center; padding: 20px;">Se încarcă utilizatorii...</div>
+                <!-- Users will be loaded here -->
+                <div style="grid-column: 1/-1; text-align: center; padding: 20px;">Loading users...</div>
             </div>
         </div>
 
         <div style="margin-top: 30px; text-align: center; opacity: 0.6; font-size: 12px;">
-            <p>Faceți click pe un utilizator pentru a vă conecta la serverul corespunzător.</p>
+            <p>Click on a user to connect to the corresponding server.</p>
         </div>
     </div>
 
@@ -53,7 +53,7 @@
             .then(data => {
                 const grid = document.getElementById('aggregatedUserGrid');
                 if (data.users.length === 0) {
-                    grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 20px;">Niciun utilizator găsit sau serverele sunt offline.</div>';
+                    grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 20px;">No users found or servers are offline.</div>';
                     return;
                 }
 
@@ -69,13 +69,13 @@
                         statusText = 'Disabled';
                     } else if (user.instances > 0 && user.instances < user.max_instances) {
                         statusClass = 'user-status-busy';
-                        statusText = user.instances + '/' + user.max_instances + ' sesiuni';
+                        statusText = user.instances + '/' + user.max_instances + ' sessions';
                     } else if (user.instances >= user.max_instances && user.max_instances > 0) {
                         statusClass = 'user-status-full';
                         statusText = 'Full';
                     } else if (user.instances === 0) {
                         statusClass = 'user-status-available';
-                        statusText = 'Disponibil';
+                        statusText = 'Available';
                     }
 
                     item.className = 'user-status-item ' + statusClass;
@@ -89,7 +89,7 @@
                             serverBadge +
                         '</div>' +
                         '<div class="user-status-info" style="text-align: right;">' +
-                            (user.ready ? 'Gata' : 'Inactiv') +
+                            (user.ready ? 'Ready' : 'Inactive') +
                         '</div>';
 
                     item.onclick = function() {
@@ -101,7 +101,7 @@
             })
             .catch(error => {
                 console.log('Error loading aggregated status:', error);
-                document.getElementById('aggregatedUserGrid').innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 20px; color: #ff6b6b;">Eroare la conectarea cu serverul aggregator.</div>';
+                document.getElementById('aggregatedUserGrid').innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 20px; color: #ff6b6b;">Error connecting to the aggregator server.</div>';
             });
     }
 

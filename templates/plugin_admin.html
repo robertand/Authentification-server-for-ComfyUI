@@ -29,28 +29,28 @@
         </div>
 
         <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #444;">
-            <div class="tab active" id="tab-servers" onclick="showTab('servers')" style="padding: 10px 20px; cursor: pointer; background: #2a2a2a; border-radius: 5px 5px 0 0; border: 1px solid #444; border-bottom: none;">Servere</div>
+            <div class="tab active" id="tab-servers" onclick="showTab('servers')" style="padding: 10px 20px; cursor: pointer; background: #2a2a2a; border-radius: 5px 5px 0 0; border: 1px solid #444; border-bottom: none;">Servers</div>
             <div class="tab" id="tab-analytics" onclick="showTab('analytics')" style="padding: 10px 20px; cursor: pointer;">Global Analytics</div>
         </div>
 
         <div id="content-servers">
             <div style="background: #2a2a2a; padding: 20px; border-radius: 10px; margin-top: 20px;">
-                <h3>Adaugă Server Nou</h3>
+                <h3>Add New Server</h3>
             <div style="display: flex; gap: 10px; margin-top: 10px;">
-                <input id="new-name" placeholder="Nume Server (ex: Server GPU 1)" style="width: 40%;">
-                <input id="new-url" placeholder="URL (ex: http://192.168.1.10:7861)" style="width: 40%;">
-                <button onclick="addServer()" style="width: 20%;">Adaugă</button>
+                <input id="new-name" placeholder="Server Name (e.g., GPU Server 1)" style="width: 40%;">
+                <input id="new-url" placeholder="URL (e.g., http://192.168.1.10:7861)" style="width: 40%;">
+                <button onclick="addServer()" style="width: 20%;">Add</button>
             </div>
         </div>
 
         <div style="background: #2a2a2a; padding: 20px; border-radius: 10px; margin-top: 20px;">
-            <h3>Servere Înrolate</h3>
+            <h3>Enrolled Servers</h3>
             <table>
                 <thead>
                     <tr>
-                        <th>Nume</th>
+                        <th>Name</th>
                         <th>URL</th>
-                        <th>Acțiuni</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -58,7 +58,7 @@
                     <tr>
                         <td>{{ server['display_name'] }}</td>
                         <td>{{ server['url'] }}</td>
-                        <td><button class="btn-del" onclick="deleteServer({{ i }})">Șterge</button></td>
+                        <td><button class="btn-del" onclick="deleteServer({{ i }})">Delete</button></td>
                     </tr>
                     {% end %}
                 </tbody>
@@ -66,7 +66,7 @@
         </div>
 
             <div style="margin-top: 20px; text-align: center;">
-                <a href="http://localhost:{{ config['port'] }}" target="_blank" style="color: #007bff;">Deschide Aggregator UI →</a>
+                <a href="http://localhost:{{ config['port'] }}" target="_blank" style="color: #007bff;">Open Aggregator UI →</a>
             </div>
         </div>
 
@@ -74,12 +74,12 @@
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <button onclick="changeGlobalDate(-1)">←</button>
-                    <button onclick="setGlobalDate('today')">Azi</button>
+                    <button onclick="setGlobalDate('today')">Today</button>
                     <button onclick="changeGlobalDate(1)">→</button>
                     <select id="global-view-type" onchange="loadGlobalStats()" style="background: #333; color: white; padding: 5px; border-radius: 5px;">
-                        <option value="daily">Zilnic</option>
-                        <option value="monthly">Lunar</option>
-                        <option value="yearly">Anual</option>
+                        <option value="daily">Daily</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
                     </select>
                 </div>
                 <button onclick="exportGlobalPDF()" style="background: #28a745; width: auto;">Export Global PDF</button>
@@ -87,17 +87,17 @@
 
             <div id="pdf-export-container">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <h2 style="margin:0;">Analitice Utilizare Globală (Aggregator)</h2>
+                    <h2 style="margin:0;">Global Usage Analytics (Aggregator)</h2>
                     <div id="global-analytics-date" style="font-size: 18px; font-weight: bold; color: #007bff;"></div>
                 </div>
 
                 <div class="pdf-avoid-break" style="display: flex; gap: 20px; flex-wrap: wrap; background: transparent; border: none; padding: 0;">
                     <div style="flex: 1; min-width: 45%; background: #222; padding: 20px; border-radius: 10px;">
-                        <h3 style="margin-top:0;">Număr Joburi Executate Global</h3>
+                        <h3 style="margin-top:0;">Global Executed Jobs Count</h3>
                         <div style="height: 300px;"><canvas id="globalJobsChart"></canvas></div>
                     </div>
                     <div style="flex: 1; min-width: 45%; background: #222; padding: 20px; border-radius: 10px;">
-                        <h3 style="margin-top:0;">Timp Total Logat (Ore)</h3>
+                        <h3 style="margin-top:0;">Total Logged Time (Hours)</h3>
                         <div style="height: 300px;"><canvas id="globalOccupancyChart"></canvas></div>
                     </div>
                 </div>
@@ -105,7 +105,7 @@
                 <div class="pdf-page-break" style="height: 20px;"></div>
 
                 <div style="background: #222; padding: 20px; border-radius: 10px; margin-top: 20px;" class="pdf-avoid-break">
-                    <h3>Cronologie Activitate Globală</h3>
+                    <h3>Global Activity Timeline</h3>
                     <div style="height: 400px; width: 100%;">
                         <canvas id="globalTimelineChart"></canvas>
                     </div>
@@ -115,13 +115,13 @@
 
                 <div class="pdf-avoid-break pdf-pie-container" style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 20px;">
                     <div style="flex: 1; min-width: 45%; background: #222; padding: 20px; border-radius: 10px;">
-                        <h3 style="margin-top:0; text-align: center;">Distribuție Joburi per Server</h3>
+                        <h3 style="margin-top:0; text-align: center;">Job Distribution per Server</h3>
                         <div style="max-height: 250px; display: flex; justify-content: center;">
                             <canvas id="globalServerPieChart"></canvas>
                         </div>
                     </div>
                     <div style="flex: 1; min-width: 45%; background: #222; padding: 20px; border-radius: 10px;">
-                        <h3 style="margin-top:0; text-align: center;">Timp Total Logat per Utilizator</h3>
+                        <h3 style="margin-top:0; text-align: center;">Total Logged Time per User</h3>
                         <div style="max-height: 250px; display: flex; justify-content: center;">
                             <canvas id="globalUserPieChart"></canvas>
                         </div>
@@ -131,7 +131,7 @@
                 <div class="pdf-page-break" style="height: 20px;"></div>
 
                 <div style="background: #2a2a2a; padding: 20px; border-radius: 10px; margin-top: 20px;">
-                <h3>Istoric Sesiuni Global (Ultimele 50)</h3>
+                <h3>Global Session History (Last 50)</h3>
                 <div style="max-height: 400px; overflow-y: auto;">
                     <table id="globalSessionTable">
                         <thead>
@@ -205,8 +205,8 @@
         const viewType = document.getElementById('global-view-type').value;
         const d = currentGlobalDate;
         let dateStr = "";
-        if (viewType === 'daily') dateStr = d.toLocaleDateString('ro-RO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-        else if (viewType === 'monthly') dateStr = d.toLocaleDateString('ro-RO', { year: 'numeric', month: 'long' });
+        if (viewType === 'daily') dateStr = d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        else if (viewType === 'monthly') dateStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
         else dateStr = d.getFullYear();
 
         document.getElementById('global-analytics-date').textContent = dateStr;
@@ -326,7 +326,7 @@
         else if (viewType === 'monthly') timeSteps = new Date(baseDate.getFullYear(), baseDate.getMonth() + 1, 0).getDate();
         else timeSteps = 12;
 
-        const monthLabels = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Noi', 'Dec'];
+        const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         for (let i = 0; i < timeSteps; i++) {
             if (viewType === 'daily') timelineLabels.push(i + ':00');
             else if (viewType === 'monthly') timelineLabels.push((i + 1).toString());
@@ -369,16 +369,16 @@
                 userSess.forEach(s => {
                     const overlap = Math.max(0, Math.min(s.end_time, sEnd) - Math.max(s.start_time, sStart));
                     let val = 0;
-                    if (viewType === 'daily') val = overlap / 60; // minute
-                    else val = overlap / 3600; // ore
+                    if (viewType === 'daily') val = overlap / 60; // minutes
+                    else val = overlap / 3600; // hours
                     stepActive[i] += val;
                 });
             }
-            return { label: `${user} (Timp Logat)`, data: stepActive, backgroundColor: getUserColor(user), fill: true, tension: 0.4, yAxisID: 'yTime', pointRadius: 0 };
+            return { label: `${user} (Logged Time)`, data: stepActive, backgroundColor: getUserColor(user), fill: true, tension: 0.4, yAxisID: 'yTime', pointRadius: 0 };
         });
 
         timelineDatasets.push({
-            label: 'Joburi Executate', data: stepJobs, borderColor: '#007bff', borderWidth: 3, pointRadius: 4, yAxisID: 'yJobs', type: 'line', fill: false
+            label: 'Executed Jobs', data: stepJobs, borderColor: '#007bff', borderWidth: 3, pointRadius: 4, yAxisID: 'yJobs', type: 'line', fill: false
         });
 
         if (timelineChart) timelineChart.destroy();
@@ -389,8 +389,8 @@
                 responsive: true, maintainAspectRatio: false,
                 plugins: { legend: { display: true, labels: { color: '#aaa' } } },
                 scales: {
-                    yJobs: { position: 'left', beginAtZero: true, title: { display: true, text: 'Joburi', color: '#007bff' }, ticks: { color: '#aaa' } },
-                    yTime: { position: 'right', beginAtZero: true, stacked: true, title: { display: true, text: viewType === 'daily' ? 'Minute Active' : 'Ore Active', color: '#28a745' }, grid: { display: false }, ticks: { color: '#aaa' } },
+                    yJobs: { position: 'left', beginAtZero: true, title: { display: true, text: 'Jobs', color: '#007bff' }, ticks: { color: '#aaa' } },
+                    yTime: { position: 'right', beginAtZero: true, stacked: true, title: { display: true, text: viewType === 'daily' ? 'Active Minutes' : 'Active Hours', color: '#28a745' }, grid: { display: false }, ticks: { color: '#aaa' } },
                     x: { ticks: { color: '#aaa' } }
                 }
             }
@@ -430,7 +430,7 @@
     function addServer() {
         const name = document.getElementById('new-name').value;
         const url = document.getElementById('new-url').value;
-        if (!name || !url) return alert('Completează ambele câmpuri');
+        if (!name || !url) return alert('Please complete both fields');
 
         fetch('/api/servers', {
             method: 'POST',
@@ -439,7 +439,7 @@
     }
 
     function deleteServer(index) {
-        if (!confirm('Ești sigur că vrei să ștergi acest server?')) return;
+        if (!confirm('Are you sure you want to delete this server?')) return;
         fetch('/api/servers?index=' + index, { method: 'DELETE' })
             .then(() => location.reload());
     }

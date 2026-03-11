@@ -615,18 +615,18 @@
 
                 <div class="nginx-section pdf-avoid-break" style="display: flex; gap: 20px; flex-wrap: wrap;">
                     <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                        <h3 style="margin-top:0;">Număr Joburi Executate</h3>
+                        <h3 style="margin-top:0;">Number of Executed Jobs</h3>
                         <canvas id="jobsChart"></canvas>
                     </div>
                     <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                        <h3 style="margin-top:0;">Timp Petrecut (Utilizator Logat)</h3>
+                        <h3 style="margin-top:0;">Time Spent (User Logged In)</h3>
                         <canvas id="timeChart"></canvas>
                     </div>
                 </div>
 
                 <div class="pdf-page-break" style="height: 5px;"></div>
                 <div class="nginx-section pdf-avoid-break" style="margin-top: 0;">
-                    <h3 id="timeline-chart-title" style="margin-top:0;">Cronologie Activitate (Utilizare Server)</h3>
+                    <h3 id="timeline-chart-title" style="margin-top:0;">Activity Timeline (Server Usage)</h3>
                     <div style="height: 400px; width: 100%;">
                         <canvas id="timelineChart"></canvas>
                     </div>
@@ -637,13 +637,13 @@
                 <div class="nginx-section pdf-avoid-break" style="margin-top: 0;">
                     <div style="display: flex; gap: 20px; flex-wrap: wrap;">
                         <div style="flex: 1; min-width: 45%;">
-                            <h3 style="margin-top:0; text-align: center;">Distribuție Joburi per Server</h3>
+                            <h3 style="margin-top:0; text-align: center;">Job Distribution per Server</h3>
                             <div style="max-height: 300px; display: flex; justify-content: center;">
                                 <canvas id="serverPieChart"></canvas>
                             </div>
                         </div>
                         <div style="flex: 1; min-width: 45%;">
-                            <h3 style="margin-top:0; text-align: center;">Timp Total Logat (Timpul petrecut cu user-ul deschis)</h3>
+                            <h3 style="margin-top:0; text-align: center;">Total Logged Time (Time spent with user open)</h3>
                             <div id="total-hours-display" style="text-align: center; margin-bottom: 10px; font-weight: bold; color: #28a745;"></div>
                             <div style="max-height: 300px; display: flex; justify-content: center;">
                                 <canvas id="occupancyPieChart"></canvas>
@@ -1325,16 +1325,16 @@
         }
 
         function restartServer() {
-            if (!confirm('Sunteți sigur că doriți să restartați serverul? Această acțiune va deconecta toți utilizatorii activi.')) return;
+            if (!confirm('Are you sure you want to restart the server? This action will disconnect all active users.')) return;
 
             const messageDiv = document.getElementById('serverSettingsMessage');
-            messageDiv.innerHTML = '<div style="color: #ffc107;">Restartarea a fost solicitată...</div>';
+            messageDiv.innerHTML = '<div style="color: #ffc107;">Restart requested...</div>';
 
             fetch('/admin/api/restart', { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
-                        messageDiv.innerHTML = '<div style="color: #28a745;">Serverul se restartează. Reîncărcați pagina peste câteva secunde.</div>';
+                        messageDiv.innerHTML = '<div style="color: #28a745;">Server is restarting. Reload the page in a few seconds.</div>';
                         // Optionally redirect after a delay
                         setTimeout(() => {
                             const newAdminPort = document.getElementById('adminPort').value;
@@ -1348,8 +1348,8 @@
                     }
                 })
                 .catch(err => {
-                    console.error('Eroare restart:', err);
-                    messageDiv.innerHTML = '<div style="color: #dc3545;">Eroare la restart. Verificați logurile serverului.</div>';
+                    console.error('Restart error:', err);
+                    messageDiv.innerHTML = '<div style="color: #dc3545;">Restart error. Check server logs.</div>';
                 });
         }
 
@@ -1800,7 +1800,7 @@
 
             const jobs = Object.values(activeJobs);
             if (jobs.length === 0) {
-                grid.innerHTML = '<p style="padding: 10px; color: #888;">Niciun job în curs de procesare.</p>';
+                grid.innerHTML = '<p style="padding: 10px; color: #888;">No jobs currently processing.</p>';
                 return;
             }
 
@@ -1809,10 +1809,10 @@
                 card.className = 'status-card limited';
                 const elapsed = Math.floor(Date.now() / 1000 - job.start_time);
                 card.innerHTML = `
-                    <h4>Utilizator: ${job.user}</h4>
+                    <h4>User: ${job.user}</h4>
                     <p>Server: ${job.server}</p>
-                    <p>ID Prompt: ${job.prompt_id.substring(0, 8)}...</p>
-                    <p>Timp scurs: ${elapsed}s</p>
+                    <p>Prompt ID: ${job.prompt_id.substring(0, 8)}...</p>
+                    <p>Elapsed Time: ${elapsed}s</p>
                 `;
                 grid.appendChild(card);
             });
@@ -2176,7 +2176,7 @@
                                 type: 'linear',
                                 position: 'left',
                                 beginAtZero: true,
-                                title: { display: true, text: 'Număr Joburi', color: '#007bff' },
+                                title: { display: true, text: 'Number of Jobs', color: '#007bff' },
                                 grid: { color: 'rgba(255, 255, 255, 0.1)' },
                                 ticks: { color: '#aaa' }
                             },
@@ -2185,7 +2185,7 @@
                                 position: 'right',
                                 beginAtZero: true,
                                 stacked: true,
-                                title: { display: true, text: viewType === 'daily' ? 'Minute Active' : 'Ore Active', color: '#28a745' },
+                                title: { display: true, text: viewType === 'daily' ? 'Active Minutes' : 'Active Hours', color: '#28a745' },
                                 grid: { display: false },
                                 ticks: { color: '#aaa' }
                             },

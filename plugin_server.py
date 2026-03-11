@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Plugin Server pentru ComfyUI - Aggregator & High-Performance Proxy (Synced with Auth Server)
-Colectează userii de la mai multe servere de autentificare și routează tot traficul prin acest server.
-Folosește aceeași logică robustă de proxy ca și serverul de autentificare original.
+Plugin Server for ComfyUI - Aggregator & High-Performance Proxy (Synced with Auth Server)
+Collects users from multiple authentication servers and routes all traffic through this server.
+Uses the same robust proxy logic as the original authentication server.
 """
 
 import tornado.ioloop
@@ -50,7 +50,7 @@ def load_config():
                     conf["backend_admin_password"] = "admin123"
                 return conf
         except Exception as e:
-            log.error(f"Eroare la încărcarea configurației: {e}")
+            log.error(f"Error loading configuration: {e}")
 
     return {
         "plugin_name": "PRO AI Aggregator",
@@ -67,7 +67,7 @@ def save_config(conf):
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(conf, f, indent=4, ensure_ascii=False)
     except Exception as e:
-        log.error(f"Eroare la salvarea configurației: {e}")
+        log.error(f"Error saving configuration: {e}")
 
 config = load_config()
 
@@ -140,7 +140,7 @@ class AggregatorBaseHandler(tornado.web.RequestHandler):
         return get_agg_session(session_id.decode())
 
     def prepare(self):
-        # Securitate de bază și prevenire cache
+        # Basic security and cache prevention
         self.set_header("X-Content-Type-Options", "nosniff")
         self.set_header("X-XSS-Protection", "1; mode=block")
         self.set_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -180,7 +180,7 @@ class AggregatedStatusHandler(AggregatorBaseHandler):
                         user["server_name"] = server_info["display_name"]
                     aggregated_users.extend(users)
                 except Exception as e:
-                    log.error(f"Eroare la procesarea răspunsului de la {server_info['url']}: {e}")
+                    log.error(f"Error processing response from {server_info['url']}: {e}")
 
         current_session = self.get_current_user()
         session_info = None
@@ -251,7 +251,7 @@ class AggregatorLoginHandler(AggregatorBaseHandler):
                 }
                 self.set_secure_cookie("agg_session_id", agg_sid, expires_days=1, path="/")
                 log.info(f"User {username} logged in via Aggregator for server {server_url}")
-                # Redirect direct la comfy după login reușit
+                # Redirect directly to comfy after successful login
                 self.redirect("/comfy/")
             else:
                 log.warning(f"Login failed for {username} on {server_url}. Code: {response.code}, Session found: {bool(signed_session_id)}")
@@ -268,10 +268,10 @@ class AggregatorLogoutHandler(AggregatorBaseHandler):
             session = AGG_SESSIONS.get(sid_str)
 
             if session:
-                # Notificăm backend-ul de logout pentru a elibera instanța GPU folosind noul API de terminare securizat
+                # Notify backend of logout to release GPU instance using the new secure termination API
                 try:
                     client = tornado.httpclient.AsyncHTTPClient()
-                    # Încercăm întâi terminarea securizată prin API admin
+                    # Try secure termination via admin API first
                     terminate_url = f"{session['server_url'].rstrip('/')}/admin/api/terminate-session"
                     admin_pass = config.get("backend_admin_password", "admin123")
 
@@ -288,10 +288,10 @@ class AggregatorLogoutHandler(AggregatorBaseHandler):
                     response = await client.fetch(terminate_req, raise_error=False)
 
                     if response.code == 200:
-                        log.info(f"Sesiune terminată cu succes prin API Admin pe {session['server_url']} pentru {session['user']}")
+                        log.info(f"Session terminated successfully via Admin API on {session['server_url']} for {session['user']}")
                     else:
-                        log.warning(f"Eroare API terminare (Code {response.code}). Încercăm logout clasic.")
-                        # Fallback la logout normal cu auto-redirect
+                        log.warning(f"Termination API error (Code {response.code}). Trying classic logout.")
+                        # Fallback to normal logout with auto-redirect
                         agg_root = f"{self.request.protocol}://{self.request.host}/"
                         logout_url = f"{session['server_url'].rstrip('/')}/logout?redirect={quote(agg_root)}"
                         req = tornado.httpclient.HTTPRequest(
@@ -301,9 +301,9 @@ class AggregatorLogoutHandler(AggregatorBaseHandler):
                             request_timeout=5
                         )
                         await client.fetch(req, raise_error=False)
-                        log.info(f"Logout proxy clasic executat pentru {session['user']} pe {session['server_url']}")
+                        log.info(f"Classic proxy logout executed for {session['user']} on {session['server_url']}")
                 except Exception as e:
-                    log.error(f"Eroare la trimiterea logout către backend: {e}")
+                    log.error(f"Error sending logout to backend: {e}")
 
                 del AGG_SESSIONS[sid_str]
 
@@ -391,14 +391,14 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
     async def _proxy_request(self, method, path):
         session = self.get_current_user()
         if not session:
-            # Dacă nu suntem logați, verificăm dacă e o cerere API sau de browser
-            # path este restul URL-ului după aggregator-root/
+            # If not logged in, check if it's an API or browser request
+            # path is the rest of the URL after aggregator-root/
             if path and path.startswith(('comfy/api/', 'comfy/view/', 'comfy/upload/', 'comfy/websocket')):
                 self.set_status(401)
-                self.write({"error": "Sesiune aggregator inexistentă sau expirată"})
+                self.write({"error": "Aggregator session non-existent or expired"})
                 return
 
-            # Browser: redirect la dashboard. Curățăm și cookie-ul pentru siguranță.
+            # Browser: redirect to dashboard. Clear cookie for safety.
             if self.get_secure_cookie("agg_session_id"):
                 self.clear_cookie("agg_session_id", path="/")
             self.redirect("/")
@@ -406,8 +406,8 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
 
         backend_base = session["server_url"].rstrip('/')
 
-        # Sincronizare cu auth_server.py: folosim URI-ul brut direct,
-        # fără să tăiem /comfy/ deoarece serverul backend are deja propria logică de prefix.
+        # Sync with auth_server.py: use raw URI directly,
+        # without stripping /comfy/ because the backend server already has its own prefix logic.
         raw_uri = self.request.uri
         target_url = f"{backend_base}{raw_uri}"
 
@@ -467,13 +467,13 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
 
             response = await client.fetch(req, raise_error=False)
 
-            # Detectare sesiune backend expirată sau redirecturi de auth/logout
+            # Detection of expired backend session or auth/logout redirects
             if response.code == 302:
                 loc = response.headers.get("Location", "")
                 parsed_loc = urlparse(loc)
-                # Dacă backend-ul ne trimite la login sau dacă am apelat logout prin proxy
+                # If backend sends us to login or if we called logout via proxy
                 if parsed_loc.path in ['/login', '/login/', '/logout', '/logout/']:
-                    log.warning(f"Sesiune terminată pe backend pentru {session['user']} (Redirect detectat: {loc}). Curățăm sesiunea locală.")
+                    log.warning(f"Session terminated on backend for {session['user']} (Redirect detected: {loc}). Clearing local session.")
                     sid = self.get_secure_cookie("agg_session_id")
                     if sid:
                         sid_str = sid.decode()
@@ -654,7 +654,7 @@ class AdminLoginHandler(AdminBaseHandler):
         <div id="aboutDrawer" class="about-drawer">
             <div class="about-drawer-content">
                 <h2>Aggregator Admin</h2>
-                <p>Consolă de management centralizată pentru servere ComfyUI.</p>
+                <p>Centralized management console for ComfyUI servers.</p>
             </div>
         </div>
         """
@@ -679,7 +679,7 @@ class AdminLoginHandler(AdminBaseHandler):
             <div id="aboutDrawer" class="about-drawer">
                 <div class="about-drawer-content">
                     <h2>Aggregator Admin</h2>
-                    <p>Consolă de management centralizată pentru servere ComfyUI.</p>
+                    <p>Centralized management console for ComfyUI servers.</p>
                 </div>
             </div>
             """
@@ -711,7 +711,7 @@ class AggregatorRootHandler(AggregatorBaseHandler):
     def get(self):
         session = self.get_current_user()
         if session:
-            # Dacă suntem logați, mergem la comfy
+            # If logged in, go to comfy
             self.redirect("/comfy/")
             return
 
@@ -732,18 +732,16 @@ class AdminApiGlobalStatsHandler(AdminBaseHandler):
         global_history = []
         global_sessions = []
 
-        # Obținem parola admin din config pentru sincronizare
+        # Get admin password from config for synchronization
         admin_pass = config.get("backend_admin_password", "admin123")
 
         tasks = []
         for server in config["servers"]:
-            # Deocamdată presupunem că backends au aceleași date de acces admin
-            # În producție ar trebui stocate per server
+            # For now assume backends have the same admin credentials
+            # In production they should be stored per server
             url = f"{server['url'].rstrip('/')}/admin/api/usage-stats"
-            # Avem nevoie de sesiune admin sau auth pentru acest API.
-            # Implementăm o metodă simplă: login admin și apoi stats.
-            # Sau modificăm backend-ul să accepte X-Admin-Password pentru stats.
-            # Pentru simplitate, folosim login-ul existent.
+            # We need an admin or auth session for this API.
+            # We use the X-Admin-Password header support in backend for simplicity.
 
             req = tornado.httpclient.HTTPRequest(
                 url=url,
@@ -762,14 +760,14 @@ class AdminApiGlobalStatsHandler(AdminBaseHandler):
                     sess = data.get("session_history", [])
                     active_sess = data.get("active_sessions", {})
 
-                    # Adăugăm info server la fiecare înregistrare
+                    # Add server info to each record
                     for h in hist: h["server_name"] = server_info["display_name"]
                     for s in sess: s["server_name"] = server_info["display_name"]
 
                     global_history.extend(hist)
                     global_sessions.extend(sess)
 
-                    # Adăugăm și sesiunile active în istoric pentru vizualizare
+                    # Add active sessions to history for visualization
                     now = time.time()
                     for sid, sdata in active_sess.items():
                         global_sessions.append({
@@ -840,6 +838,6 @@ if __name__ == "__main__":
     agg_port, admin_port = config.get("port", 8200), config.get("admin_port", 8201)
     agg_app.listen(agg_port)
     admin_app.listen(admin_port)
-    log.info(f"Aggregator Server pornit pe portul {agg_port} (Synced High-Performance Proxy)")
-    log.info(f"Aggregator Admin pornit pe portul {admin_port}")
+    log.info(f"Aggregator Server started on port {agg_port} (Synced High-Performance Proxy)")
+    log.info(f"Aggregator Admin started on port {admin_port}")
     tornado.ioloop.IOLoop.current().start()

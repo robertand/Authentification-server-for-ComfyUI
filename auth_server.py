@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Auth Server pentru ComfyUI - ADMIN INTERFACE
-Proxy complet - tot traficul trece prin server cu rescriere completă de URL-uri
+Auth Server for ComfyUI - ADMIN INTERFACE
+Full Proxy - all traffic passes through the server with full URL rewriting
 """
 
 import tornado.ioloop
@@ -34,11 +34,11 @@ ABOUT_DRAWER_HTML = """
     <div class="about-drawer-content">
         <h2>PRO AI Server v0.4.5</h2>
         <div class="about-glass-card">
-            <p>Sistem avansat de management și autentificare pentru instanțe multiple ComfyUI.</p>
-            <p>Toate sistemele sunt operaționale. Nodurile GPU de înaltă performanță sunt active.</p>
+            <p>Advanced management and authentication system for multiple ComfyUI instances.</p>
+            <p>All systems are operational. High-performance GPU nodes are active.</p>
         </div>
         <div style="margin-top: 30px; text-align: center; opacity: 0.7; font-size: 12px;">
-            <p>Versiunea 0.4.5 - Creat pentru echipele PRO AI</p>
+            <p>Version 0.4.5 - Created for PRO AI teams</p>
         </div>
     </div>
 </div>
@@ -109,9 +109,9 @@ USER_SETTINGS_MODAL_HTML = """
 SESSION_MODALS_HTML = """
 <div id="forcedLogoutModal" class="forced-logout-modal">
     <div class="forced-logout-modal-content">
-        <h2>Sesiune Închisă</h2>
-        <p>Sesiunea dumneavoastră a fost terminată de către administrator.</p>
-        <div class="forced-logout-info">Administratorul a închis această sesiune de lucru.</div>
+        <h2>Session Closed</h2>
+        <p>Your session has been terminated by the administrator.</p>
+        <div class="forced-logout-info">The administrator has closed this work session.</div>
         <button class="forced-logout-btn" onclick="redirectToLogin()">OK</button>
     </div>
 </div>
@@ -441,12 +441,12 @@ def load_config():
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-                log.info("✓ Configurație încărcată din fișier")
+                log.info("✓ Configuration loaded from file")
         except Exception as e:
-            log.error(f"Eroare la încărcarea configurației: {e}")
+            log.error(f"Error loading configuration: {e}")
             config = DEFAULT_CONFIG.copy()
     else:
-        log.info("✓ Folosind configurația implicită")
+        log.info("✓ Using default configuration")
         config = DEFAULT_CONFIG.copy()
 
     if "cookie_secret" not in config:
@@ -492,9 +492,9 @@ def save_config():
         }
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
-        log.info("✓ Configurație salvată în fișier")
+        log.info("✓ Configuration saved to file")
     except Exception as e:
-        log.error(f"Eroare la salvarea configurației: {e}")
+        log.error(f"Error saving configuration: {e}")
 
 def cleanup_stuck_sessions():
     log.info("Checking for stuck sessions...")
@@ -838,11 +838,11 @@ class LoginHandler(BaseHandler):
 
 class UserStatusHandler(BaseHandler):
     def get(self):
-        # Tracking activitate plugin-uri externe
+        # External plugin activity tracking
         plugin_name = self.request.headers.get("X-Plugin-Name")
         if plugin_name:
             LAST_PLUGIN_ACTIVITY[plugin_name] = time.time()
-            log.info(f"Activitate detectată de la Plugin Server: {plugin_name}")
+            log.info(f"Activity detected from Plugin Server: {plugin_name}")
 
         user_status = []
         sorted_users = sorted(USERS.items(), key=lambda x: x[0].lower())
@@ -857,7 +857,7 @@ class UserStatusHandler(BaseHandler):
                 "nginx_auth": user_data.get("nginx_auth", {"enabled": False})
             })
         
-        # Filtrează plugin-urile active în ultimele 60 de secunde
+        # Filter active plugins in the last 60 seconds
         current_time = time.time()
         active_plugins = [name for name, last_seen in LAST_PLUGIN_ACTIVITY.items() if current_time - last_seen < 60]
 
@@ -1561,7 +1561,7 @@ class AdminLoginHandler(BaseHandler):
         
         password = self.get_argument("password", "")
         
-        # Verifică parola
+        # Check password
         if check_password(ADMIN_CONFIG["password"], password):
             session_id = create_admin_session()
             # Set path="/" to ensure it's sent for all /admin/api/ requests
@@ -1575,7 +1575,7 @@ class AdminLoginHandler(BaseHandler):
             RateLimiter.record_failed_attempt(client_ip)
             log.warning(f"Failed admin login attempt from IP {client_ip}")
             
-            # Reafișează pagina cu eroare
+            # Re-render page with error
             self.render("admin_login.html", error="Invalid admin password!", about_modal=ABOUT_DRAWER_HTML)
 
 class AdminLogoutHandler(BaseHandler):
@@ -1968,7 +1968,7 @@ class AdminServerSettingsHandler(BaseHandler):
 
             save_config()
             log.info(f"Admin updated server ports: Auth={AUTH_PORT}, Admin={ADMIN_PORT}")
-            self.write({"success": True, "message": "Porturile au fost actualizate. Vă rugăm să restartați serverul."})
+            self.write({"success": True, "message": "Ports have been updated. Please restart the server."})
         except Exception as e:
             log.error(f"Error updating server ports: {e}")
             self.set_status(500)
@@ -1979,7 +1979,7 @@ class AdminTerminateSessionHandler(tornado.web.RequestHandler):
         self.set_header("Content-Type", "application/json")
 
     def post(self):
-        # Securizat cu admin_password pentru a permite plugin_server să apeleze
+        # Secured with admin_password to allow plugin_server to call
         try:
             data = tornado.escape.json_decode(self.request.body)
             admin_pass = data.get("admin_password")
@@ -1999,20 +1999,20 @@ class AdminTerminateSessionHandler(tornado.web.RequestHandler):
                 self.write({"error": "Unauthorized"})
                 return
 
-            log.info(f"Cerere terminare sesiune: {session_id}. Sesiuni disponibile: {list(sessions.keys())}")
-            # Normalizăm session_id (scoatem ghilimelele dacă sunt prezente din cookie-ul brut)
+            log.info(f"Session termination request: {session_id}. Available sessions: {list(sessions.keys())}")
+            # Normalize session_id (remove quotes if present from raw cookie)
             if session_id and (session_id.startswith('"') or session_id.startswith('%22')):
                 session_id = unquote(session_id).strip('"')
 
             if session_id in sessions:
                 user = sessions[session_id]["user"]
-                log.info(f"Terminare sesiune la distanță: {session_id} pentru utilizatorul {user}")
+                log.info(f"Remote session termination: {session_id} for user {user}")
 
                 # Decrement instance count
                 if user in USERS:
                     USERS[user]["instances"] = max(0, USERS[user]["instances"] - 1)
 
-                # Închidem WebSocket-urile asociate dacă există
+                # Close associated WebSockets if any
                 if session_id in USER_CHAT_WEBSOCKETS:
                     for ws in list(USER_CHAT_WEBSOCKETS[session_id]):
                         ws.close()
@@ -2022,11 +2022,11 @@ class AdminTerminateSessionHandler(tornado.web.RequestHandler):
 
                 del sessions[session_id]
                 save_config()
-                self.write({"success": True, "message": f"Sesiunea {session_id} a fost terminată"})
+                self.write({"success": True, "message": f"Session {session_id} was terminated"})
             else:
-                self.write({"success": False, "error": "Sesiunea nu a fost găsită"})
+                self.write({"success": False, "error": "Session not found"})
         except Exception as e:
-            log.error(f"Eroare terminare sesiune la distanță: {e}")
+            log.error(f"Error terminating remote session: {e}")
             self.set_status(500)
             self.write({"error": str(e)})
 
@@ -2037,7 +2037,7 @@ class AdminRestartHandler(BaseHandler):
             return
 
         log.warning("Admin requested server restart...")
-        self.write({"success": True, "message": "Serverul se restartează..."})
+        self.write({"success": True, "message": "Server is restarting..."})
 
         # Schedule restart after a short delay to allow response to be sent
         tornado.ioloop.IOLoop.current().add_timeout(
@@ -2789,12 +2789,12 @@ class MultiInstanceProxyHandler(BaseHandler):
             
             # Pentru răspunsuri HTML sau JSON, rescrie URL-urile și injectează UI-ul
             content_type = response.headers.get('Content-Type', '').lower()
-            # Permitem rescrierea și pentru coduri de eroare (ex: 403) dacă e HTML/JSON
+            # Allow rewriting for error codes (e.g., 403) if it's HTML/JSON
             is_html = 'text/html' in content_type and response.code not in [204, 304]
             is_json = 'application/json' in content_type and response.code not in [204, 304]
             
             if (is_html or is_json) and response.body:
-                # Interceptăm prompt_id pentru monitorizare utilizare
+                # Intercept prompt_id for usage monitoring
                 if is_json and "/prompt" in raw_path and method == "POST" and response.code == 200:
                     try:
                         prompt_resp = json.loads(response.body)
@@ -2805,7 +2805,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                         pass
 
                 try:
-                    # Determină encoding-ul
+                    # Determine encoding
                     encoding = 'utf-8'
                     if 'charset=' in content_type:
                         charset_match = re.search(r'charset=([\w-]+)', content_type, re.IGNORECASE)
@@ -2814,12 +2814,12 @@ class MultiInstanceProxyHandler(BaseHandler):
                     
                     content = response.body.decode(encoding, errors='replace')
                     
-                    # Rescrie URL-urile - suportă X-Forwarded-Host pentru aggregator
+                    # Rewrite URLs - supports X-Forwarded-Host for aggregator
                     host = self.request.headers.get("X-Forwarded-Host", self.request.host)
                     proxy_base_url = f"{self.request.protocol}://{host}"
                     content = self._rewrite_urls(content, comfy_url, proxy_base_url)
                     
-                    # Injectează UI-ul nostru doar în HTML (doar pe succes)
+                    # Inject our UI only into HTML (only on success)
                     if is_html and response.code == 200:
                         content = self._inject_ui(content, proxy_username)
                     
@@ -2845,7 +2845,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             self.write(f"Bad Gateway: {str(e)}")
     
     def _inject_ui(self, html_content, username):
-        """Injectează UI-ul în răspunsurile HTML"""
+        """Injects UI into HTML responses"""
         try:
             # Elimină CSP-ul care ar putea bloca resursele noastre
             html_content = re.sub(
@@ -3106,7 +3106,7 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
         log.info(f"WebSocket connecting for user {self.username} to {comfy_ws_url}")
         
         try:
-            # Construim URL-ul cu parametrii în query string pentru a transmite sesiunea
+            # Build URL with parameters in query string to transmit session
             parsed_url = urlparse(comfy_ws_url)
             query_params = []
             if parsed_url.query:

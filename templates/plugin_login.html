@@ -5,14 +5,14 @@
 <body>
     <div class="container">
         <div class="login-title">{{ plugin_name }}</div>
-        <div class="login-subtitle">CONECTARE LA {{ username }}</div>
+        <div class="login-subtitle">CONNECTING TO {{ username }}</div>
 
         <form method="post">
             <input type="hidden" name="server_url" value="{{ server_url }}">
             <input type="hidden" name="username" value="{{ username }}">
-            <div style="margin-bottom: 15px; font-weight: bold;">Utilizator: {{ username }}</div>
-            <input type="password" name="password" placeholder="Parolă" required autofocus><br>
-            <button type="submit">Autentificare</button>
+            <div style="margin-bottom: 15px; font-weight: bold;">User: {{ username }}</div>
+            <input type="password" name="password" placeholder="Password" required autofocus><br>
+            <button type="submit">Login</button>
         </form>
 
         {% if error %}
@@ -20,7 +20,7 @@
         {% end %}
 
         <div style="margin-top: 20px;">
-            <a href="/" style="color: #007bff; text-decoration: none; font-size: 14px;">← Înapoi la listă</a>
+            <a href="/" style="color: #007bff; text-decoration: none; font-size: 14px;">← Back to list</a>
         </div>
     </div>
 </body></html>
