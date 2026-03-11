@@ -8,12 +8,21 @@
     .btn-del { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; }
 </style>
 </head>
-<body style="background: #1a1a1a;">
-    <div class="container" style="max-width: 800px;">
-        <div class="login-title">Admin Aggregator</div>
+<body style="background: #1a1a1a; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+    <div class="container" style="max-width: 1200px; margin: 0 auto; padding: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+            <div class="login-title" style="margin: 0;">Aggregator Multi-Server Admin</div>
+            <button onclick="location.href='/logout'" style="background: #6c757d; width: auto; padding: 8px 20px;">Logout</button>
+        </div>
 
-        <div style="background: #2a2a2a; padding: 20px; border-radius: 10px; margin-top: 20px;">
-            <h3>Adaugă Server Nou</h3>
+        <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #444;">
+            <div class="tab active" id="tab-servers" onclick="showTab('servers')" style="padding: 10px 20px; cursor: pointer; background: #2a2a2a; border-radius: 5px 5px 0 0; border: 1px solid #444; border-bottom: none;">Servere</div>
+            <div class="tab" id="tab-analytics" onclick="showTab('analytics')" style="padding: 10px 20px; cursor: pointer;">Global Analytics</div>
+        </div>
+
+        <div id="content-servers">
+            <div style="background: #2a2a2a; padding: 20px; border-radius: 10px; margin-top: 20px;">
+                <h3>Adaugă Server Nou</h3>
             <div style="display: flex; gap: 10px; margin-top: 10px;">
                 <input id="new-name" placeholder="Nume Server (ex: Server GPU 1)" style="width: 40%;">
                 <input id="new-url" placeholder="URL (ex: http://192.168.1.10:7861)" style="width: 40%;">
@@ -43,12 +52,147 @@
             </table>
         </div>
 
-        <div style="margin-top: 20px; text-align: center;">
-            <a href="http://localhost:{{ config['port'] }}" target="_blank" style="color: #007bff;">Deschide Aggregator UI →</a>
+            <div style="margin-top: 20px; text-align: center;">
+                <a href="http://localhost:{{ config['port'] }}" target="_blank" style="color: #007bff;">Deschide Aggregator UI →</a>
+            </div>
+        </div>
+
+        <div id="content-analytics" style="display: none;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
+                <div style="background: #2a2a2a; padding: 20px; border-radius: 10px;">
+                    <h3>Distribuție Joburi (Global)</h3>
+                    <canvas id="globalJobsChart"></canvas>
+                </div>
+                <div style="background: #2a2a2a; padding: 20px; border-radius: 10px;">
+                    <h3>Ocupare Server (Global - ore)</h3>
+                    <canvas id="globalOccupancyChart"></canvas>
+                </div>
+            </div>
+
+            <div style="background: #2a2a2a; padding: 20px; border-radius: 10px; margin-top: 20px;">
+                <h3>Global Session History (Last 50)</h3>
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table id="globalSessionTable">
+                        <thead>
+                            <tr>
+                                <th>Server</th>
+                                <th>User</th>
+                                <th>Login</th>
+                                <th>Logout</th>
+                                <th>Duration</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
+    let jobsChart = null;
+    let occupancyChart = null;
+
+    function showTab(name) {
+        document.querySelectorAll('.tab').forEach(t => {
+            t.classList.remove('active');
+            t.style.background = 'transparent';
+            t.style.border = 'none';
+        });
+        document.getElementById('tab-' + name).classList.add('active');
+        document.getElementById('tab-' + name).style.background = '#2a2a2a';
+        document.getElementById('tab-' + name).style.border = '1px solid #444';
+        document.getElementById('tab-' + name).style.borderBottom = 'none';
+
+        document.getElementById('content-servers').style.display = name === 'servers' ? 'block' : 'none';
+        document.getElementById('content-analytics').style.display = name === 'analytics' ? 'block' : 'none';
+
+        if (name === 'analytics') loadGlobalStats();
+    }
+
+    function formatDuration(seconds) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+        let res = "";
+        if (hours > 0) res += hours + "h ";
+        if (minutes > 0 || hours > 0) res += minutes + "m ";
+        res += secs + "s";
+        return res;
+    }
+
+    function loadGlobalStats() {
+        fetch('/api/global-stats')
+            .then(r => r.json())
+            .then(data => {
+                updateCharts(data);
+                updateSessionTable(data.session_history);
+            });
+    }
+
+    function updateCharts(data) {
+        const userStats = {};
+        data.history.forEach(job => {
+            if (!userStats[job.user]) userStats[job.user] = { jobs: 0, time: 0 };
+            userStats[job.user].jobs++;
+        });
+        data.session_history.forEach(sess => {
+            if (!userStats[sess.user]) userStats[sess.user] = { jobs: 0, time: 0 };
+            userStats[sess.user].time += sess.duration;
+        });
+
+        const labels = Object.keys(userStats);
+        const jobsData = labels.map(l => userStats[l].jobs);
+        const occupancyData = labels.map(l => userStats[l].time / 3600);
+
+        const ctxJobs = document.getElementById('globalJobsChart').getContext('2d');
+        if (jobsChart) jobsChart.destroy();
+        jobsChart = new Chart(ctxJobs, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Joburi Totale',
+                    data: jobsData,
+                    backgroundColor: 'rgba(54, 162, 235, 0.6)'
+                }]
+            },
+            options: { scales: { y: { beginAtZero: true, ticks: { color: '#aaa' } }, x: { ticks: { color: '#aaa' } } } }
+        });
+
+        const ctxOcc = document.getElementById('globalOccupancyChart').getContext('2d');
+        if (occupancyChart) occupancyChart.destroy();
+        occupancyChart = new Chart(ctxOcc, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Ocupare (ore)',
+                    data: occupancyData,
+                    backgroundColor: 'rgba(75, 192, 192, 0.6)'
+                }]
+            },
+            options: { scales: { y: { beginAtZero: true, ticks: { color: '#aaa' } }, x: { ticks: { color: '#aaa' } } } }
+        });
+    }
+
+    function updateSessionTable(sessions) {
+        const tbody = document.querySelector('#globalSessionTable tbody');
+        tbody.innerHTML = '';
+        [...sessions].sort((a,b) => b.start_time - a.start_time).slice(0, 50).forEach(s => {
+            const row = tbody.insertRow();
+            row.innerHTML = `
+                <td>${s.server_name}</td>
+                <td>${s.user}</td>
+                <td>${new Date(s.start_time * 1000).toLocaleString()}</td>
+                <td>${s.is_active ? '-' : new Date(s.end_time * 1000).toLocaleString()}</td>
+                <td>${formatDuration(s.duration)}</td>
+                <td style="color: ${s.is_active ? '#ffc107' : '#28a745'}">${s.is_active ? 'Active' : 'Finished'}</td>
+            `;
+        });
+    }
     function addServer() {
         const name = document.getElementById('new-name').value;
         const url = document.getElementById('new-url').value;

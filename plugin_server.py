@@ -46,6 +46,8 @@ def load_config():
                     conf["cookie_secret"] = base64.b64encode(os.urandom(32)).decode()
                 if "admin_password" not in conf:
                     conf["admin_password"] = "admin"
+                if "backend_admin_password" not in conf:
+                    conf["backend_admin_password"] = "admin123"
                 return conf
         except Exception as e:
             log.error(f"Eroare la încărcarea configurației: {e}")
@@ -56,7 +58,8 @@ def load_config():
         "admin_port": 8201,
         "servers": [],
         "cookie_secret": base64.b64encode(os.urandom(32)).decode(),
-        "admin_password": "admin"
+        "admin_password": "admin",
+        "backend_admin_password": "admin123"
     }
 
 def save_config(conf):
@@ -179,32 +182,34 @@ class AggregatorLoginHandler(AggregatorBaseHandler):
                 url=f"{server_url.rstrip('/')}/login",
                 method="POST",
                 body=body,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "X-Plugin-Name": config["plugin_name"]
+                },
                 follow_redirects=False,
                 request_timeout=10
             )
             response = await client.fetch(req, raise_error=False)
 
-            auth_session_id = None
+            raw_session_id = response.headers.get("X-Raw-Session-ID")
+            signed_session_id = None
+
             if "Set-Cookie" in response.headers:
                 from http.cookies import SimpleCookie
                 for header in response.headers.get_list("Set-Cookie"):
                     if "session_id=" in header:
-                        cookie = SimpleCookie()
-                        cookie.load(header)
-                        if "session_id" in cookie:
-                            # Păstrăm valoarea brută (cu tot cu ghilimele dacă există) pentru a fi compatibili cu backend-ul
-                            match = re.search(r'session_id=([^;]+)', header)
-                            if match:
-                                auth_session_id = match.group(1)
-                                break
+                        match = re.search(r'session_id=([^;]+)', header)
+                        if match:
+                            signed_session_id = match.group(1)
+                            break
 
-            if response.code in [302, 200] and auth_session_id:
+            if response.code in [302, 200] and signed_session_id:
                 agg_sid = str(uuid.uuid4())
                 AGG_SESSIONS[agg_sid] = {
                     "user": username,
                     "server_url": server_url,
-                    "auth_session_id": auth_session_id,
+                    "signed_session_id": signed_session_id,
+                    "raw_session_id": raw_session_id or signed_session_id,
                     "created": time.time()
                 }
                 self.set_secure_cookie("agg_session_id", agg_sid, expires_days=1, path="/")
@@ -226,18 +231,39 @@ class AggregatorLogoutHandler(AggregatorBaseHandler):
             session = AGG_SESSIONS.get(sid_str)
 
             if session:
-                # Notificăm backend-ul de logout pentru a elibera instanța GPU
+                # Notificăm backend-ul de logout pentru a elibera instanța GPU folosind noul API de terminare securizat
                 try:
                     client = tornado.httpclient.AsyncHTTPClient()
-                    logout_url = f"{session['server_url'].rstrip('/')}/logout"
-                    req = tornado.httpclient.HTTPRequest(
-                        url=logout_url,
-                        method="GET",
-                        headers={"Cookie": f"session_id={session['auth_session_id']}"},
+                    # Încercăm întâi terminarea securizată prin API admin
+                    terminate_url = f"{session['server_url'].rstrip('/')}/admin/api/terminate-session"
+                    admin_pass = config.get("backend_admin_password", "admin123")
+
+                    terminate_req = tornado.httpclient.HTTPRequest(
+                        url=terminate_url,
+                        method="POST",
+                        body=json.dumps({
+                            "admin_password": admin_pass,
+                            "session_id": session['raw_session_id']
+                        }),
+                        headers={"Content-Type": "application/json"},
                         request_timeout=5
                     )
-                    await client.fetch(req, raise_error=False)
-                    log.info(f"Logout proxy succes pentru {session['user']} pe {session['server_url']}")
+                    response = await client.fetch(terminate_req, raise_error=False)
+
+                    if response.code == 200:
+                        log.info(f"Sesiune terminată cu succes prin API Admin pe {session['server_url']} pentru {session['user']}")
+                    else:
+                        log.warning(f"Eroare API terminare (Code {response.code}). Încercăm logout clasic.")
+                        # Fallback la logout normal
+                        logout_url = f"{session['server_url'].rstrip('/')}/logout"
+                        req = tornado.httpclient.HTTPRequest(
+                            url=logout_url,
+                            method="GET",
+                            headers={"Cookie": f"session_id={session['signed_session_id']}"},
+                            request_timeout=5
+                        )
+                        await client.fetch(req, raise_error=False)
+                        log.info(f"Logout proxy clasic executat pentru {session['user']} pe {session['server_url']}")
                 except Exception as e:
                     log.error(f"Eroare la trimiterea logout către backend: {e}")
 
@@ -364,16 +390,16 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
                 # Scoatem eventualele session_id vechi din backend daca existau direct
                 filtered = [c for c in cookies if not c.startswith('session_id=')]
                 # Injectam session_id-ul corect pentru acest server backend
-                filtered.append(f"session_id={session['auth_session_id']}")
+                filtered.append(f"session_id={session['signed_session_id']}")
                 headers['Cookie'] = '; '.join(filtered)
             else:
-                headers['Cookie'] = f"session_id={session['auth_session_id']}"
+                headers['Cookie'] = f"session_id={session['signed_session_id']}"
 
             headers['X-Forwarded-For'] = self.get_client_ip()
             headers['X-Forwarded-Proto'] = self.request.protocol
             headers['X-Forwarded-Host'] = self.request.host
             headers['X-User-ID'] = session['user']
-            headers['X-Session-ID'] = session['auth_session_id']
+            headers['X-Session-ID'] = session['raw_session_id']
             headers['Sec-Fetch-Site'] = 'same-origin'
 
             if 'Origin' in self.request.headers:
@@ -484,7 +510,7 @@ class AggregatorWebSocketProxy(tornado.websocket.WebSocketHandler):
         # Includem session_id în query string pentru backend
         uri_parts = list(urlparse(self.request.uri))
         query = self.request.query
-        new_query = f"{query}&session_id={session['auth_session_id']}" if query else f"session_id={session['auth_session_id']}"
+        new_query = f"{query}&session_id={session['signed_session_id']}" if query else f"session_id={session['signed_session_id']}"
         uri_parts[0] = ws_scheme
         uri_parts[1] = backend_netloc
         uri_parts[4] = new_query
@@ -503,10 +529,10 @@ class AggregatorWebSocketProxy(tornado.websocket.WebSocketHandler):
         if 'Cookie' in ws_headers:
             cookies = ws_headers['Cookie'].split('; ')
             filtered = [c for c in cookies if not c.startswith('session_id=')]
-            filtered.append(f"session_id={session['auth_session_id']}")
+            filtered.append(f"session_id={session['signed_session_id']}")
             ws_headers['Cookie'] = '; '.join(filtered)
         else:
-            ws_headers['Cookie'] = f"session_id={session['auth_session_id']}"
+            ws_headers['Cookie'] = f"session_id={session['signed_session_id']}"
 
         ws_headers['X-Forwarded-For'] = self.request.headers.get("X-Forwarded-For", self.request.remote_ip)
         ws_headers['X-Forwarded-Host'] = self.request.host
@@ -617,6 +643,74 @@ class AggregatorRootHandler(AggregatorBaseHandler):
 
         self.render("plugin_index.html", plugin_name=config["plugin_name"])
 
+class AdminLogoutHandler(AdminBaseHandler):
+    def get(self):
+        self.clear_cookie("agg_admin_session")
+        self.redirect("/login")
+
+class AdminApiGlobalStatsHandler(AdminBaseHandler):
+    @tornado.web.authenticated
+    async def get(self):
+        client = tornado.httpclient.AsyncHTTPClient()
+        global_history = []
+        global_sessions = []
+
+        # Obținem parola admin din config pentru sincronizare
+        admin_pass = config.get("backend_admin_password", "admin123")
+
+        tasks = []
+        for server in config["servers"]:
+            # Deocamdată presupunem că backends au aceleași date de acces admin
+            # În producție ar trebui stocate per server
+            url = f"{server['url'].rstrip('/')}/admin/api/usage-stats"
+            # Avem nevoie de sesiune admin sau auth pentru acest API.
+            # Implementăm o metodă simplă: login admin și apoi stats.
+            # Sau modificăm backend-ul să accepte X-Admin-Password pentru stats.
+            # Pentru simplitate, folosim login-ul existent.
+
+            req = tornado.httpclient.HTTPRequest(
+                url=url,
+                method="GET",
+                headers={"X-Admin-Password": admin_pass}, # Vom adăuga suport în backend
+                request_timeout=10
+            )
+            tasks.append((server, client.fetch(req, raise_error=False)))
+
+        for server_info, future in tasks:
+            response = await future
+            if response.code == 200:
+                try:
+                    data = json.loads(response.body)
+                    hist = data.get("history", [])
+                    sess = data.get("session_history", [])
+                    active_sess = data.get("active_sessions", {})
+
+                    # Adăugăm info server la fiecare înregistrare
+                    for h in hist: h["server_name"] = server_info["display_name"]
+                    for s in sess: s["server_name"] = server_info["display_name"]
+
+                    global_history.extend(hist)
+                    global_sessions.extend(sess)
+
+                    # Adăugăm și sesiunile active în istoric pentru vizualizare
+                    now = time.time()
+                    for sid, sdata in active_sess.items():
+                        global_sessions.append({
+                            **sdata,
+                            "end_time": now,
+                            "duration": now - sdata["start_time"],
+                            "is_active": True,
+                            "server_name": server_info["display_name"]
+                        })
+                except Exception as e:
+                    log.error(f"Error parsing stats from {server_info['url']}: {e}")
+
+        self.set_header("Content-Type", "application/json")
+        self.write({
+            "history": global_history,
+            "session_history": global_sessions
+        })
+
 class AdminRootHandler(AdminBaseHandler):
     def get(self): self.redirect("/admin")
 
@@ -652,8 +746,10 @@ def make_aggregator_app():
 def make_admin_app():
     return tornado.web.Application([
         (r"/login", AdminLoginHandler),
+        (r"/logout", AdminLogoutHandler),
         (r"/admin", AdminMainHandler),
         (r"/api/servers", AdminApiServersHandler),
+        (r"/api/global-stats", AdminApiGlobalStatsHandler),
         (r"/static/(.*)", tornado.web.StaticFileHandler, {'path': os.path.join(os.path.dirname(__file__), "static")}),
         (r"/", AdminRootHandler),
     ],

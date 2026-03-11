@@ -619,7 +619,7 @@
                         <canvas id="jobsChart"></canvas>
                     </div>
                     <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                        <h3 style="margin-top:0;">Total Time per User</h3>
+                        <h3 style="margin-top:0;">Server Occupancy per User (Session Time)</h3>
                         <canvas id="timeChart"></canvas>
                     </div>
                 </div>
@@ -632,10 +632,20 @@
                 <div class="pdf-spacer"></div>
 
                 <div class="nginx-section pdf-avoid-break pdf-page-break">
-                    <h3 style="margin-top:0;">Server Distribution</h3>
-                    <div id="total-hours-display" style="text-align: center; margin-bottom: 10px; font-weight: bold; color: #28a745;"></div>
-                    <div style="max-height: 300px; display: flex; justify-content: center;">
-                        <canvas id="serverPieChart"></canvas>
+                    <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 45%;">
+                            <h3 style="margin-top:0; text-align: center;">Server Job Distribution</h3>
+                            <div style="max-height: 300px; display: flex; justify-content: center;">
+                                <canvas id="serverPieChart"></canvas>
+                            </div>
+                        </div>
+                        <div style="flex: 1; min-width: 45%;">
+                            <h3 style="margin-top:0; text-align: center;">User Occupancy Distribution</h3>
+                            <div id="total-hours-display" style="text-align: center; margin-bottom: 10px; font-weight: bold; color: #28a745;"></div>
+                            <div style="max-height: 300px; display: flex; justify-content: center;">
+                                <canvas id="occupancyPieChart"></canvas>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -653,12 +663,31 @@
                             <tr>
                                 <th>User</th>
                                 <th>Total Jobs</th>
-                                <th>Total Time</th>
-                                <th>Average Time</th>
+                                <th>Job Time</th>
+                                <th>Avg Job Time</th>
+                                <th>Session Time (Occupancy)</th>
                             </tr>
                         </thead>
                         <tbody id="userStatsTable">
                             <!-- User stats here -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="nginx-section pdf-avoid-break">
+                    <h3>Session History (Logins/Logouts)</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>User</th>
+                                <th>Login Time</th>
+                                <th>Logout Time</th>
+                                <th>Duration</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sessionStatsTable">
+                            <!-- Session stats here -->
                         </tbody>
                     </table>
                 </div>
@@ -735,6 +764,7 @@
         let timeChart = null;
         let timelineChart = null;
         let serverPieChart = null;
+        let occupancyPieChart = null;
 
         let currentAnalyticsDate = new Date();
         let usageHistoryData = [];
@@ -774,7 +804,9 @@
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
             
-            event.target.classList.add('active');
+            const selectedTab = Array.from(document.querySelectorAll('.tab')).find(t => t.textContent.toLowerCase().includes(tabName.toLowerCase()));
+            if (selectedTab) selectedTab.classList.add('active');
+
             document.getElementById(tabName).classList.add('active');
             
             if (tabName === 'chat') {
@@ -1744,6 +1776,7 @@
             }
 
             updateStatsTables(filteredHistory, filteredSessions);
+            updateUsageHistory(filteredHistory, filteredSessions);
         }
 
         function formatDuration(seconds) {
@@ -1789,7 +1822,7 @@
 
             history.forEach(job => {
                 // Per User
-                if (!userStats[job.user]) userStats[job.user] = { count: 0, time: 0 };
+                if (!userStats[job.user]) userStats[job.user] = { count: 0, time: 0, sessionTime: 0 };
                 userStats[job.user].count++;
                 userStats[job.user].time += job.duration;
                 grandTotalSeconds += job.duration;
@@ -1799,11 +1832,18 @@
                 serverStats[job.server]++;
             });
 
+            // Add session time to user stats
+            sessions.forEach(sess => {
+                if (!userStats[sess.user]) userStats[sess.user] = { count: 0, time: 0, sessionTime: 0 };
+                userStats[sess.user].sessionTime += sess.duration;
+            });
+
             const sortedUsers = Object.entries(userStats).sort((a,b) => b[1].count - a[1].count);
 
-            // Total hours accumulated
-            const totalHours = (grandTotalSeconds / 3600).toFixed(2);
-            document.getElementById('total-hours-display').textContent = `Total Accumulated: ${totalHours} Hours`;
+            // Total hours accumulated (Session based as requested)
+            const totalSessionSeconds = sessions.reduce((acc, s) => acc + s.duration, 0);
+            const totalHours = (totalSessionSeconds / 3600).toFixed(2);
+            document.getElementById('total-hours-display').textContent = `Total Occupancy: ${totalHours} Hours`;
 
             // Fill User Table
             const userTable = document.getElementById('userStatsTable');
@@ -1814,9 +1854,38 @@
                     <td>${user}</td>
                     <td>${stats.count}</td>
                     <td>${formatDuration(stats.time)}</td>
-                    <td>${formatDuration(stats.time / stats.count)}</td>
+                    <td>${stats.count > 0 ? formatDuration(stats.time / stats.count) : '0s'}</td>
+                    <td style="color: #28a745; font-weight: bold;">${formatDuration(stats.sessionTime)}</td>
                 `;
                 userTable.appendChild(row);
+            });
+
+            // Fill Session Table
+            const sessionTable = document.getElementById('sessionStatsTable');
+            sessionTable.innerHTML = '';
+            const viewType = document.getElementById('analytics-view-type').value;
+
+            [...sessions].reverse().slice(0, 50).forEach(sess => {
+                const row = document.createElement('tr');
+                const status = sess.is_active ? '<span style="color:#ffc107;">Active</span>' : 'Finished';
+
+                // Show date for Monthly/Yearly views
+                const timeStr = viewType === 'daily' ?
+                    new Date(sess.start_time * 1000).toLocaleTimeString() :
+                    new Date(sess.start_time * 1000).toLocaleString();
+
+                const logoutStr = sess.is_active ? '-' : (viewType === 'daily' ?
+                    new Date(sess.end_time * 1000).toLocaleTimeString() :
+                    new Date(sess.end_time * 1000).toLocaleString());
+
+                row.innerHTML = `
+                    <td>${sess.user}</td>
+                    <td>${timeStr}</td>
+                    <td>${logoutStr}</td>
+                    <td>${formatDuration(sess.duration)}</td>
+                    <td>${status}</td>
+                `;
+                sessionTable.appendChild(row);
             });
 
             // Update Charts
@@ -1835,7 +1904,7 @@
         function updateCharts(sortedUsers, serverStats, history, sessions) {
             const labels = sortedUsers.map(u => u[0]);
             const jobsData = sortedUsers.map(u => u[1].count);
-            const timeData = sortedUsers.map(u => u[1].time / 60); // In minutes
+            const timeData = sortedUsers.map(u => u[1].sessionTime / 60); // In minutes (Occupancy)
 
             const commonOptions = {
                 responsive: true,
@@ -1926,8 +1995,43 @@
                         plugins: {
                             legend: {
                                 display: true,
-                                position: 'right',
-                                labels: { color: '#aaa' }
+                                position: 'bottom',
+                                labels: { color: '#aaa', boxWidth: 10 }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Occupancy Pie Chart
+            const occLabels = sortedUsers.map(u => u[0]);
+            const occData = sortedUsers.map(u => u[1].sessionTime / 3600); // In hours
+            const occColors = occLabels.map(u => getUserColor(u));
+            const occCtx = document.getElementById('occupancyPieChart').getContext('2d');
+
+            if (occupancyPieChart) {
+                occupancyPieChart.data.labels = occLabels;
+                occupancyPieChart.data.datasets[0].data = occData;
+                occupancyPieChart.data.datasets[0].backgroundColor = occColors;
+                occupancyPieChart.update();
+            } else {
+                occupancyPieChart = new Chart(occCtx, {
+                    type: 'pie',
+                    data: {
+                        labels: occLabels,
+                        datasets: [{
+                            data: occData,
+                            backgroundColor: occColors,
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'bottom',
+                                labels: { color: '#aaa', boxWidth: 10 }
                             }
                         }
                     }
@@ -2092,16 +2196,50 @@
             }
         }
 
-        function updateUsageHistory(history) {
+        function updateUsageHistory(history, sessions) {
             const logDiv = document.getElementById('usageHistory');
             logDiv.innerHTML = '';
 
-            // Revers cronologic
-            [...history].reverse().slice(0, 50).forEach(job => {
-                const timeStr = new Date(job.end_time * 1000).toLocaleString();
+            // Combine jobs and session events into a single timeline
+            const events = [];
+
+            history.forEach(job => {
+                events.push({
+                    time: job.end_time,
+                    user: job.user,
+                    type: 'job',
+                    msg: `finished job on ${job.server} (${job.duration.toFixed(1)}s)`,
+                    color: '#28a745'
+                });
+            });
+
+            sessions.forEach(sess => {
+                events.push({
+                    time: sess.start_time,
+                    user: sess.user,
+                    type: 'login',
+                    msg: `logged in`,
+                    color: '#007bff'
+                });
+                if (!sess.is_active) {
+                    events.push({
+                        time: sess.end_time,
+                        user: sess.user,
+                        type: 'logout',
+                        msg: `logged out (Duration: ${formatDuration(sess.duration)})`,
+                        color: '#dc3545'
+                    });
+                }
+            });
+
+            // Sort by time descending
+            events.sort((a, b) => b.time - a.time);
+
+            events.slice(0, 100).forEach(evt => {
+                const timeStr = new Date(evt.time * 1000).toLocaleString();
                 const p = document.createElement('p');
                 p.style.margin = '2px 0';
-                p.innerHTML = `<span style="color: #28a745;">[${timeStr}]</span> <strong>${job.user}</strong> finished job on ${job.server} (${job.duration.toFixed(1)}s)`;
+                p.innerHTML = `<span style="color: ${evt.color};">[${timeStr}]</span> <strong>${evt.user}</strong> ${evt.msg}`;
                 logDiv.appendChild(p);
             });
         }

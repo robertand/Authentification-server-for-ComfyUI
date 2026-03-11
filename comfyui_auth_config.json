@@ -3,9 +3,9 @@
   "admin_port": 8199,
   "users": {
     "user1": {
-      "password": "$2b$12$nPEc3w2cYhgYCqRGEo3JKeNy/s4OAMVb5rUgajy.FBp1l86jpPJuS",
+      "password": "$2b$12$V1qaDxFNTkqPzCGDLjbXPuPgdjxlcbBOzfJ.4ltWaOwlRkeDRb21m",
       "comfy_url": "http://127.0.0.1:8188",
-      "instances": 0,
+      "instances": 1,
       "max_instances": 2,
       "session_timeout": 60,
       "enabled": true,

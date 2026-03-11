@@ -805,6 +805,10 @@ class LoginHandler(BaseHandler):
                 session_id = create_session(user)
                 self.set_secure_cookie("session_id", session_id, expires_days=1, path="/")
                 
+                # Dacă cererea vine de la un aggregator, trimitem și ID-ul brut pentru management la distanță
+                if self.request.headers.get("X-Plugin-Name"):
+                    self.set_header("X-Raw-Session-ID", session_id)
+
                 RateLimiter.clear_attempts(client_ip)
                 
                 log.info(f"User {user} logged in successfully from IP {client_ip}")
@@ -1602,7 +1606,19 @@ class AdminHandler(BaseHandler):
 
 class AdminUsageStatsHandler(BaseHandler):
     def get(self):
-        if not is_admin_authenticated(self):
+        # Permitem accesul și prin X-Admin-Password pentru Aggregator
+        admin_pass_header = self.request.headers.get("X-Admin-Password")
+        authorized = False
+
+        if admin_pass_header:
+            expected_pass = config.get("admin_password", "admin123")
+            if isinstance(expected_pass, str) and expected_pass.startswith("$2b$"):
+                if bcrypt.checkpw(admin_pass_header.encode(), expected_pass.encode()):
+                    authorized = True
+            elif admin_pass_header == expected_pass:
+                authorized = True
+
+        if not authorized and not is_admin_authenticated(self):
             self.set_status(401)
             return
 
@@ -1957,6 +1973,58 @@ class AdminServerSettingsHandler(BaseHandler):
             log.error(f"Error updating server ports: {e}")
             self.set_status(500)
             self.write({"success": False, "error": str(e)})
+
+class AdminTerminateSessionHandler(tornado.web.RequestHandler):
+    def set_default_headers(self):
+        self.set_header("Content-Type", "application/json")
+
+    def post(self):
+        # Securizat cu admin_password pentru a permite plugin_server să apeleze
+        try:
+            data = tornado.escape.json_decode(self.request.body)
+            admin_pass = data.get("admin_password")
+            session_id = data.get("session_id")
+
+            expected_pass = config.get("admin_password", "admin123")
+            authorized = False
+            if isinstance(expected_pass, str) and expected_pass.startswith("$2b$"):
+                if admin_pass and bcrypt.checkpw(admin_pass.encode(), expected_pass.encode()):
+                    authorized = True
+            else:
+                if admin_pass == expected_pass:
+                    authorized = True
+
+            if not authorized:
+                self.set_status(403)
+                self.write({"error": "Unauthorized"})
+                return
+
+            log.info(f"Cerere terminare sesiune: {session_id}. Sesiuni disponibile: {list(sessions.keys())}")
+            # Normalizăm session_id (scoatem ghilimelele dacă sunt prezente din cookie-ul brut)
+            if session_id and (session_id.startswith('"') or session_id.startswith('%22')):
+                session_id = unquote(session_id).strip('"')
+
+            if session_id in sessions:
+                user = sessions[session_id]["user"]
+                log.info(f"Terminare sesiune la distanță: {session_id} pentru utilizatorul {user}")
+
+                # Închidem WebSocket-urile asociate dacă există
+                if session_id in USER_CHAT_WEBSOCKETS:
+                    for ws in list(USER_CHAT_WEBSOCKETS[session_id]):
+                        ws.close()
+
+                # Log logout in usage stats
+                record_session_end(session_id)
+
+                del sessions[session_id]
+                save_config()
+                self.write({"success": True, "message": f"Sesiunea {session_id} a fost terminată"})
+            else:
+                self.write({"success": False, "error": "Sesiunea nu a fost găsită"})
+        except Exception as e:
+            log.error(f"Eroare terminare sesiune la distanță: {e}")
+            self.set_status(500)
+            self.write({"error": str(e)})
 
 class AdminRestartHandler(BaseHandler):
     def post(self):
@@ -3312,6 +3380,7 @@ def make_auth_app():
         
         # Session routes
         (r"/health", HealthHandler),
+        (r"/admin/api/terminate-session", AdminTerminateSessionHandler),
         (r"/check-session", SessionCheckHandler),
         (r"/refresh-session", SessionRefreshHandler),
         
@@ -3370,6 +3439,7 @@ def make_admin_app():
         (r"/admin/api/nginx-auth/user/(.*)", AdminNginxAuthUserHandler),
         (r"/admin/api/server-settings", AdminServerSettingsHandler),
         (r"/admin/api/restart", AdminRestartHandler),
+        (r"/admin/api/terminate-session", AdminTerminateSessionHandler),
         (r"/admin/api/workflow-settings", AdminWorkflowSettingsHandler),
         (r"/admin/api/chat/users", AdminChatUsersHandler),
         (r"/admin/api/chat/messages/(.*)", AdminChatMessagesHandler),
