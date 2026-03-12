@@ -449,8 +449,6 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
                 if ref_path.startswith('/comfy/'): ref_path = ref_path[6:]
                 headers['Referer'] = urlunparse((urlparse(backend_base).scheme, headers['Host'], ref_path, ref_parsed.params, ref_parsed.query, ref_parsed.fragment))
 
-            streaming_callback = self._stream_response if int(self.request.headers.get('Content-Length', 0)) > 10*1024*1024 else None
-
             req = tornado.httpclient.HTTPRequest(
                 url=target_url,
                 method=method,
@@ -461,8 +459,7 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
                 request_timeout=300,
                 validate_cert=False,
                 decompress_response=True,
-                allow_nonstandard_methods=True,
-                streaming_callback=streaming_callback
+                allow_nonstandard_methods=True
             )
 
             response = await client.fetch(req, raise_error=False)
@@ -493,8 +490,6 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
 
             if "Access-Control-Allow-Origin" not in self._headers: self.set_header("Access-Control-Allow-Origin", "*")
             if "Access-Control-Allow-Credentials" not in self._headers: self.set_header("Access-Control-Allow-Credentials", "true")
-
-            if streaming_callback: return
 
             content_type = response.headers.get('Content-Type', '').lower()
             is_html = 'text/html' in content_type and response.code not in [204, 304]
@@ -836,8 +831,8 @@ def make_admin_app():
 if __name__ == "__main__":
     agg_app, admin_app = make_aggregator_app(), make_admin_app()
     agg_port, admin_port = config.get("port", 8200), config.get("admin_port", 8201)
-    agg_app.listen(agg_port)
-    admin_app.listen(admin_port)
+    agg_app.listen(agg_port, max_body_size=MAX_BUFFER_SIZE, max_buffer_size=MAX_BUFFER_SIZE)
+    admin_app.listen(admin_port, max_body_size=MAX_BUFFER_SIZE, max_buffer_size=MAX_BUFFER_SIZE)
     log.info(f"Aggregator Server started on port {agg_port} (Synced High-Performance Proxy)")
     log.info(f"Aggregator Admin started on port {admin_port}")
     tornado.ioloop.IOLoop.current().start()

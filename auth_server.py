@@ -138,6 +138,9 @@ MAX_CLIENTS = 100  # Număr maxim de conexiuni concurente
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 log = logging.getLogger("AUTH")
 
+# === CONFIGURARE ASYNC CLIENT ===
+tornado.httpclient.AsyncHTTPClient.configure(None, max_buffer_size=MAX_BUFFER_SIZE, max_body_size=MAX_BUFFER_SIZE)
+
 # === CONFIGURARE ===
 CONFIG_FILE = "comfyui_auth_config.json"
 
@@ -2723,12 +2726,6 @@ class MultiInstanceProxyHandler(BaseHandler):
             if method in ["POST", "PUT", "DELETE", "PATCH"] and self.request.body:
                 body = self.request.body
             
-            # Pentru cereri mari, folosește streaming
-            streaming_callback = None
-            content_length = int(self.request.headers.get('Content-Length', 0))
-            if content_length > 10 * 1024 * 1024:  # > 10MB
-                streaming_callback = self._stream_response
-            
             # Creează cererea
             req = tornado.httpclient.HTTPRequest(
                 url=target_url,
@@ -2740,8 +2737,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                 request_timeout=300,  # 5 minute pentru fișiere mari
                 validate_cert=False,
                 decompress_response=True,
-                allow_nonstandard_methods=True,
-                streaming_callback=streaming_callback
+                allow_nonstandard_methods=True
             )
             
             # Execută cererea
@@ -2782,10 +2778,6 @@ class MultiInstanceProxyHandler(BaseHandler):
                 self.set_header("Access-Control-Allow-Origin", "*")
             if "Access-Control-Allow-Credentials" not in self._headers:
                 self.set_header("Access-Control-Allow-Credentials", "true")
-            
-            # Dacă s-a folosit streaming, răspunsul a fost deja trimis
-            if streaming_callback:
-                return
             
             # Pentru răspunsuri HTML sau JSON, rescrie URL-urile și injectează UI-ul
             content_type = response.headers.get('Content-Type', '').lower()
@@ -3500,8 +3492,8 @@ if __name__ == "__main__":
         final_auth_port = config.get("auth_port", 7861)
         final_admin_port = config.get("admin_port", 8199)
 
-        auth_app.listen(final_auth_port, "0.0.0.0")
-        admin_app.listen(final_admin_port, "0.0.0.0")
+        auth_app.listen(final_auth_port, "0.0.0.0", max_body_size=MAX_BUFFER_SIZE, max_buffer_size=MAX_BUFFER_SIZE)
+        admin_app.listen(final_admin_port, "0.0.0.0", max_body_size=MAX_BUFFER_SIZE, max_buffer_size=MAX_BUFFER_SIZE)
         
         log.info(f"Auth server started on port {final_auth_port} (PROXY MODE)")
         log.info(f"Admin server started on port {final_admin_port}")
