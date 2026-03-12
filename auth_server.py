@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Auth Server pentru ComfyUI - ADMIN INTERFACE
-Proxy complet - tot traficul trece prin server cu rescriere completă de URL-uri
+Auth Server for ComfyUI - ADMIN INTERFACE
+Full Proxy - all traffic passes through the server with full URL rewriting
 """
 
 import tornado.ioloop
@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import socket
 import os
+import sys
 import bcrypt
 import base64
 from urllib.parse import quote, unquote, urlparse, urlunparse
@@ -33,11 +34,11 @@ ABOUT_DRAWER_HTML = """
     <div class="about-drawer-content">
         <h2>PRO AI Server v0.4.5</h2>
         <div class="about-glass-card">
-            <p>Sistem avansat de management și autentificare pentru instanțe multiple ComfyUI.</p>
-            <p>Toate sistemele sunt operaționale. Nodurile GPU de înaltă performanță sunt active.</p>
+            <p>Advanced management and authentication system for multiple ComfyUI instances.</p>
+            <p>All systems are operational. High-performance GPU nodes are active.</p>
         </div>
         <div style="margin-top: 30px; text-align: center; opacity: 0.7; font-size: 12px;">
-            <p>Versiunea 0.4.5 - Creat pentru echipele PRO AI</p>
+            <p>Version 0.4.5 - Created for PRO AI teams</p>
         </div>
     </div>
 </div>
@@ -108,9 +109,9 @@ USER_SETTINGS_MODAL_HTML = """
 SESSION_MODALS_HTML = """
 <div id="forcedLogoutModal" class="forced-logout-modal">
     <div class="forced-logout-modal-content">
-        <h2>Sesiune Închisă</h2>
-        <p>Sesiunea dumneavoastră a fost terminată de către administrator.</p>
-        <div class="forced-logout-info">Administratorul a închis această sesiune de lucru.</div>
+        <h2>Session Closed</h2>
+        <p>Your session has been terminated by the administrator.</p>
+        <div class="forced-logout-info">The administrator has closed this work session.</div>
         <button class="forced-logout-btn" onclick="redirectToLogin()">OK</button>
     </div>
 </div>
@@ -137,13 +138,16 @@ MAX_CLIENTS = 100  # Număr maxim de conexiuni concurente
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 log = logging.getLogger("AUTH")
 
+# === CONFIGURARE ASYNC CLIENT ===
+tornado.httpclient.AsyncHTTPClient.configure(None, max_buffer_size=MAX_BUFFER_SIZE, max_body_size=MAX_BUFFER_SIZE)
+
 # === CONFIGURARE ===
 CONFIG_FILE = "comfyui_auth_config.json"
-AUTH_PORT = 7861  # Auth server principal
-ADMIN_PORT = 8199  # Admin interface
 
 # Configurație implicită
 DEFAULT_CONFIG = {
+    "auth_port": 7861,
+    "admin_port": 8199,
     "users": {
         "user1": {
             "password": "comfy.123", 
@@ -198,9 +202,76 @@ USER_TYPING_STATUS = {}
 # === FILE STORAGE FOR CHAT ===
 CHAT_FILES = {}
 CHAT_FILES_DIR = "chat_files"
+LAST_PLUGIN_ACTIVITY = {}
 
 # === WORKFLOW BROWSER ===
 WORKFLOW_ROOT_DIR = "/mnt/prouser/spatiu/ComfyUI/workflows"
+
+# === USAGE TRACKING ===
+USAGE_STATS_FILE = "comfyui_usage_stats.json"
+USAGE_STATS = {
+    "active_jobs": {},
+    "history": [],
+    "active_sessions": {},
+    "session_history": []
+}
+
+def load_usage_stats():
+    global USAGE_STATS
+    if os.path.exists(USAGE_STATS_FILE):
+        try:
+            with open(USAGE_STATS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                USAGE_STATS["history"] = data.get("history", [])[-1000:] # Keep last 1000
+                USAGE_STATS["session_history"] = data.get("session_history", [])[-1000:] # Keep last 1000
+                log.info("✓ Usage stats loaded")
+        except:
+            log.error("Failed to load usage stats")
+
+def save_usage_stats():
+    try:
+        with open(USAGE_STATS_FILE, 'w', encoding='utf-8') as f:
+            json.dump({
+                "history": USAGE_STATS["history"],
+                "session_history": USAGE_STATS["session_history"]
+            }, f, indent=2)
+    except:
+        pass
+
+def record_job_start(user, prompt_id, server_url):
+    USAGE_STATS["active_jobs"][prompt_id] = {
+        "user": user,
+        "server": server_url,
+        "start_time": time.time(),
+        "prompt_id": prompt_id
+    }
+    log.info(f"Job started: {prompt_id} for user {user} on {server_url}")
+
+def record_job_end(prompt_id):
+    if prompt_id in USAGE_STATS["active_jobs"]:
+        job = USAGE_STATS["active_jobs"].pop(prompt_id)
+        job["end_time"] = time.time()
+        job["duration"] = job["end_time"] - job["start_time"]
+        USAGE_STATS["history"].append(job)
+        save_usage_stats()
+        log.info(f"Job finished: {prompt_id} (Duration: {job['duration']:.2f}s)")
+
+def record_session_start(user, session_id):
+    USAGE_STATS["active_sessions"][session_id] = {
+        "user": user,
+        "start_time": time.time(),
+        "session_id": session_id
+    }
+    log.info(f"Session started for {user}: {session_id}")
+
+def record_session_end(session_id):
+    if session_id in USAGE_STATS["active_sessions"]:
+        sess = USAGE_STATS["active_sessions"].pop(session_id)
+        sess["end_time"] = time.time()
+        sess["duration"] = sess["end_time"] - sess["start_time"]
+        USAGE_STATS["session_history"].append(sess)
+        save_usage_stats()
+        log.info(f"Session ended for {sess['user']} (Duration: {sess['duration']:.2f}s)")
 
 # Create chat files directory if it doesn't exist
 if not os.path.exists(CHAT_FILES_DIR):
@@ -367,18 +438,18 @@ def list_user_workflows(username):
 
 # Încarcă configurația din fișier sau folosește cea implicită
 def load_config():
-    global WORKFLOW_ROOT_DIR
+    global WORKFLOW_ROOT_DIR, AUTH_PORT, ADMIN_PORT
     
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-                log.info("✓ Configurație încărcată din fișier")
+                log.info("✓ Configuration loaded from file")
         except Exception as e:
-            log.error(f"Eroare la încărcarea configurației: {e}")
+            log.error(f"Error loading configuration: {e}")
             config = DEFAULT_CONFIG.copy()
     else:
-        log.info("✓ Folosind configurația implicită")
+        log.info("✓ Using default configuration")
         config = DEFAULT_CONFIG.copy()
 
     if "cookie_secret" not in config:
@@ -406,11 +477,16 @@ def load_config():
         WORKFLOW_ROOT_DIR = config["workflow_root"]
         log.info(f"✓ Workflow root directory loaded: {WORKFLOW_ROOT_DIR}")
     
+    AUTH_PORT = config.get("auth_port", 7861)
+    ADMIN_PORT = config.get("admin_port", 8199)
+
     return config
 
 def save_config():
     try:
         config_data = {
+            "auth_port": AUTH_PORT,
+            "admin_port": ADMIN_PORT,
             "users": USERS,
             "admin": ADMIN_CONFIG,
             "workflow_root": WORKFLOW_ROOT_DIR,
@@ -419,9 +495,9 @@ def save_config():
         }
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
-        log.info("✓ Configurație salvată în fișier")
+        log.info("✓ Configuration saved to file")
     except Exception as e:
-        log.error(f"Eroare la salvarea configurației: {e}")
+        log.error(f"Error saving configuration: {e}")
 
 def cleanup_stuck_sessions():
     log.info("Checking for stuck sessions...")
@@ -437,6 +513,7 @@ def cleanup_stuck_sessions():
 
 # Încarcă configurația inițială
 config = load_config()
+load_usage_stats()
 USERS = config["users"]
 ADMIN_CONFIG = config["admin"]
 GLOBAL_NGINX_AUTH = config.get("global_nginx_auth", {"enabled": False, "username": "", "password": ""})
@@ -534,6 +611,7 @@ def cleanup_sessions():
                     USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
     
     for session_id in expired_sessions:
+        record_session_end(session_id)
         del sessions[session_id]
 
 def cleanup_admin_sessions():
@@ -599,6 +677,7 @@ def create_session(username):
         "created": time.time()
     }
     USERS[username]["instances"] += 1
+    record_session_start(username, session_id)
     return session_id
 
 def create_admin_session():
@@ -729,6 +808,10 @@ class LoginHandler(BaseHandler):
                 session_id = create_session(user)
                 self.set_secure_cookie("session_id", session_id, expires_days=1, path="/")
                 
+                # Dacă cererea vine de la un aggregator, trimitem și ID-ul brut pentru management la distanță
+                if self.request.headers.get("X-Plugin-Name"):
+                    self.set_header("X-Raw-Session-ID", session_id)
+
                 RateLimiter.clear_attempts(client_ip)
                 
                 log.info(f"User {user} logged in successfully from IP {client_ip}")
@@ -758,6 +841,12 @@ class LoginHandler(BaseHandler):
 
 class UserStatusHandler(BaseHandler):
     def get(self):
+        # External plugin activity tracking
+        plugin_name = self.request.headers.get("X-Plugin-Name")
+        if plugin_name:
+            LAST_PLUGIN_ACTIVITY[plugin_name] = time.time()
+            log.info(f"Activity detected from Plugin Server: {plugin_name}")
+
         user_status = []
         sorted_users = sorted(USERS.items(), key=lambda x: x[0].lower())
         
@@ -771,8 +860,15 @@ class UserStatusHandler(BaseHandler):
                 "nginx_auth": user_data.get("nginx_auth", {"enabled": False})
             })
         
+        # Filter active plugins in the last 60 seconds
+        current_time = time.time()
+        active_plugins = [name for name, last_seen in LAST_PLUGIN_ACTIVITY.items() if current_time - last_seen < 60]
+
         self.set_header("Content-Type", "application/json")
-        self.write({"users": user_status})
+        self.write({
+            "users": user_status,
+            "plugins_active": active_plugins
+        })
 
 class UserSettingsHandler(BaseHandler):
     def post(self):
@@ -836,6 +932,8 @@ class LogoutHandler(BaseHandler):
                 username = sessions[session_id].get("user", "Unknown")
                 if username in USERS:
                     USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
+
+                record_session_end(session_id)
                 del sessions[session_id]
                 log.info(f"User {username} logged out")
         
@@ -1466,7 +1564,7 @@ class AdminLoginHandler(BaseHandler):
         
         password = self.get_argument("password", "")
         
-        # Verifică parola
+        # Check password
         if check_password(ADMIN_CONFIG["password"], password):
             session_id = create_admin_session()
             # Set path="/" to ensure it's sent for all /admin/api/ requests
@@ -1480,7 +1578,7 @@ class AdminLoginHandler(BaseHandler):
             RateLimiter.record_failed_attempt(client_ip)
             log.warning(f"Failed admin login attempt from IP {client_ip}")
             
-            # Reafișează pagina cu eroare
+            # Re-render page with error
             self.render("admin_login.html", error="Invalid admin password!", about_modal=ABOUT_DRAWER_HTML)
 
 class AdminLogoutHandler(BaseHandler):
@@ -1508,6 +1606,27 @@ class AdminHandler(BaseHandler):
             self.redirect("/admin/login")
             return
         self.render("admin.html", about_modal=ABOUT_DRAWER_HTML)
+
+class AdminUsageStatsHandler(BaseHandler):
+    def get(self):
+        # Permitem accesul și prin X-Admin-Password pentru Aggregator
+        admin_pass_header = self.request.headers.get("X-Admin-Password")
+        authorized = False
+
+        if admin_pass_header:
+            expected_pass = ADMIN_CONFIG["password"]
+            if isinstance(expected_pass, str) and expected_pass.startswith("$2b$"):
+                if bcrypt.checkpw(admin_pass_header.encode(), expected_pass.encode()):
+                    authorized = True
+            elif admin_pass_header == expected_pass:
+                authorized = True
+
+        if not authorized and not is_admin_authenticated(self):
+            self.set_status(401)
+            return
+
+        self.set_header("Content-Type", "application/json")
+        self.write(USAGE_STATS)
 
 class AdminStatusHandler(BaseHandler):
     def get(self):
@@ -1591,6 +1710,7 @@ class AdminSessionsHandler(BaseHandler):
             FORCED_LOGOUT_SESSIONS.add(session_id)
             
             BLOCKED_USERS[username] = time.time() + 300
+            record_session_end(session_id)
             del sessions[session_id]
             log.info(f"Admin forced logout for session {session_id}, user {username} blocked for 5 minutes")
         
@@ -1826,6 +1946,114 @@ class AdminNginxAuthUserHandler(BaseHandler):
         self.write({"success": True, "message": f"Nginx auth settings updated for user {username}"})
 
 # === ADMIN WORKFLOW SETTINGS ===
+class AdminServerSettingsHandler(BaseHandler):
+    def get(self):
+        if not is_admin_authenticated(self):
+            self.set_status(401)
+            return
+
+        self.set_header("Content-Type", "application/json")
+        self.write({
+            "auth_port": AUTH_PORT,
+            "admin_port": ADMIN_PORT
+        })
+
+    def post(self):
+        if not is_admin_authenticated(self):
+            self.set_status(401)
+            return
+
+        try:
+            data = json.loads(self.request.body)
+            global AUTH_PORT, ADMIN_PORT
+            AUTH_PORT = int(data.get("auth_port", AUTH_PORT))
+            ADMIN_PORT = int(data.get("admin_port", ADMIN_PORT))
+
+            save_config()
+            log.info(f"Admin updated server ports: Auth={AUTH_PORT}, Admin={ADMIN_PORT}")
+            self.write({"success": True, "message": "Ports have been updated. Please restart the server."})
+        except Exception as e:
+            log.error(f"Error updating server ports: {e}")
+            self.set_status(500)
+            self.write({"success": False, "error": str(e)})
+
+class AdminTerminateSessionHandler(tornado.web.RequestHandler):
+    def set_default_headers(self):
+        self.set_header("Content-Type", "application/json")
+
+    def post(self):
+        # Secured with admin_password to allow plugin_server to call
+        try:
+            data = tornado.escape.json_decode(self.request.body)
+            admin_pass = data.get("admin_password")
+            session_id = data.get("session_id")
+
+            expected_pass = ADMIN_CONFIG["password"]
+            authorized = False
+            if isinstance(expected_pass, str) and expected_pass.startswith("$2b$"):
+                if admin_pass and bcrypt.checkpw(admin_pass.encode(), expected_pass.encode()):
+                    authorized = True
+            else:
+                if admin_pass == expected_pass:
+                    authorized = True
+
+            if not authorized:
+                self.set_status(403)
+                self.write({"error": "Unauthorized"})
+                return
+
+            log.info(f"Session termination request: {session_id}. Available sessions: {list(sessions.keys())}")
+            # Normalize session_id (remove quotes if present from raw cookie)
+            if session_id and (session_id.startswith('"') or session_id.startswith('%22')):
+                session_id = unquote(session_id).strip('"')
+
+            if session_id in sessions:
+                user = sessions[session_id]["user"]
+                log.info(f"Remote session termination: {session_id} for user {user}")
+
+                # Decrement instance count
+                if user in USERS:
+                    USERS[user]["instances"] = max(0, USERS[user]["instances"] - 1)
+
+                # Close associated WebSockets if any
+                if session_id in USER_CHAT_WEBSOCKETS:
+                    for ws in list(USER_CHAT_WEBSOCKETS[session_id]):
+                        ws.close()
+
+                # Log logout in usage stats
+                record_session_end(session_id)
+
+                del sessions[session_id]
+                save_config()
+                self.write({"success": True, "message": f"Session {session_id} was terminated"})
+            else:
+                self.write({"success": False, "error": "Session not found"})
+        except Exception as e:
+            log.error(f"Error terminating remote session: {e}")
+            self.set_status(500)
+            self.write({"error": str(e)})
+
+class AdminRestartHandler(BaseHandler):
+    def post(self):
+        if not is_admin_authenticated(self):
+            self.set_status(401)
+            return
+
+        log.warning("Admin requested server restart...")
+        self.write({"success": True, "message": "Server is restarting..."})
+
+        # Schedule restart after a short delay to allow response to be sent
+        tornado.ioloop.IOLoop.current().add_timeout(
+            time.time() + 1,
+            self._restart_server
+        )
+
+    def _restart_server(self):
+        log.warning("Restarting process now!")
+        # Re-execute the current script
+        python = sys.executable
+        os.execl(python, python, *sys.argv)
+
 class AdminWorkflowSettingsHandler(BaseHandler):
     def get(self):
         if not is_admin_authenticated(self):
@@ -2350,7 +2578,8 @@ class MultiInstanceProxyHandler(BaseHandler):
         
         # Verifică expirarea sesiunii
         if session_id:
-            session_data = get_session(session_id.decode())
+            session_id_val = session_id.decode()
+            session_data = get_session(session_id_val)
             if session_data:
                 username = session_data["user"]
                 user_timeout = USERS.get(username, {}).get("session_timeout", 60)
@@ -2360,7 +2589,8 @@ class MultiInstanceProxyHandler(BaseHandler):
                     if time.time() - session_data["created"] > timeout_seconds:
                         if username in USERS:
                             USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
-                        del sessions[session_id.decode()]
+                        record_session_end(session_id_val)
+                        del sessions[session_id_val]
                         self.clear_cookie("session_id", path="/")
                         self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
                         return
@@ -2410,9 +2640,9 @@ class MultiInstanceProxyHandler(BaseHandler):
             target_url += "?" + self.request.query
         
         session_data = get_session(self.get_secure_cookie("session_id").decode())
-        username = session_data["user"] if session_data else "unknown"
+        proxy_username = session_data["user"] if session_data else "unknown"
         
-        log.info(f"Proxying {method} {path} for user {username} to {target_url}")
+        log.info(f"Proxying {method} {path} for user {proxy_username} to {target_url}")
         
         # Pregătește clientul HTTP
         client = tornado.httpclient.AsyncHTTPClient()
@@ -2476,7 +2706,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             
             # Adăugă headere de identificare pentru uz intern
             if session_id:
-                headers['X-User-ID'] = username
+                headers['X-User-ID'] = proxy_username
                 headers['X-Session-ID'] = session_id.decode()
 
             # Curăță Cookie header de cookie-urile noastre interne
@@ -2489,18 +2719,12 @@ class MultiInstanceProxyHandler(BaseHandler):
                     del headers['Cookie']
             
             # Adaugă autentificare nginx dacă este necesară
-            add_nginx_auth_headers(headers, username)
+            add_nginx_auth_headers(headers, proxy_username)
             
             # Pregătește body-ul cererii
             body = None
             if method in ["POST", "PUT", "DELETE", "PATCH"] and self.request.body:
                 body = self.request.body
-            
-            # Pentru cereri mari, folosește streaming
-            streaming_callback = None
-            content_length = int(self.request.headers.get('Content-Length', 0))
-            if content_length > 10 * 1024 * 1024:  # > 10MB
-                streaming_callback = self._stream_response
             
             # Creează cererea
             req = tornado.httpclient.HTTPRequest(
@@ -2513,8 +2737,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                 request_timeout=300,  # 5 minute pentru fișiere mari
                 validate_cert=False,
                 decompress_response=True,
-                allow_nonstandard_methods=True,
-                streaming_callback=streaming_callback
+                allow_nonstandard_methods=True
             )
             
             # Execută cererea
@@ -2541,7 +2764,8 @@ class MultiInstanceProxyHandler(BaseHandler):
                     if header_lower == 'location':
                         location = value
                         if location.startswith(comfy_url):
-                            location = location.replace(comfy_url, f"{self.request.protocol}://{self.request.host}/comfy")
+                            host = self.request.headers.get("X-Forwarded-Host", self.request.host)
+                            location = location.replace(comfy_url, f"{self.request.protocol}://{host}/comfy")
                         self.set_header(header, location)
                     elif header_lower.startswith('access-control-allow-'):
                         # Păstrăm headerul de CORS de la upstream
@@ -2555,19 +2779,25 @@ class MultiInstanceProxyHandler(BaseHandler):
             if "Access-Control-Allow-Credentials" not in self._headers:
                 self.set_header("Access-Control-Allow-Credentials", "true")
             
-            # Dacă s-a folosit streaming, răspunsul a fost deja trimis
-            if streaming_callback:
-                return
-            
             # Pentru răspunsuri HTML sau JSON, rescrie URL-urile și injectează UI-ul
             content_type = response.headers.get('Content-Type', '').lower()
-            # Permitem rescrierea și pentru coduri de eroare (ex: 403) dacă e HTML/JSON
+            # Allow rewriting for error codes (e.g., 403) if it's HTML/JSON
             is_html = 'text/html' in content_type and response.code not in [204, 304]
             is_json = 'application/json' in content_type and response.code not in [204, 304]
             
             if (is_html or is_json) and response.body:
+                # Intercept prompt_id for usage monitoring
+                if is_json and "/prompt" in raw_path and method == "POST" and response.code == 200:
+                    try:
+                        prompt_resp = json.loads(response.body)
+                        prompt_id = prompt_resp.get("prompt_id")
+                        if prompt_id:
+                            record_job_start(proxy_username, prompt_id, comfy_url)
+                    except:
+                        pass
+
                 try:
-                    # Determină encoding-ul
+                    # Determine encoding
                     encoding = 'utf-8'
                     if 'charset=' in content_type:
                         charset_match = re.search(r'charset=([\w-]+)', content_type, re.IGNORECASE)
@@ -2576,13 +2806,14 @@ class MultiInstanceProxyHandler(BaseHandler):
                     
                     content = response.body.decode(encoding, errors='replace')
                     
-                    # Rescrie URL-urile
-                    proxy_base_url = f"{self.request.protocol}://{self.request.host}"
+                    # Rewrite URLs - supports X-Forwarded-Host for aggregator
+                    host = self.request.headers.get("X-Forwarded-Host", self.request.host)
+                    proxy_base_url = f"{self.request.protocol}://{host}"
                     content = self._rewrite_urls(content, comfy_url, proxy_base_url)
                     
-                    # Injectează UI-ul nostru doar în HTML (doar pe succes)
+                    # Inject our UI only into HTML (only on success)
                     if is_html and response.code == 200:
-                        content = self._inject_ui(content, username)
+                        content = self._inject_ui(content, proxy_username)
                     
                     self.write(content.encode(encoding))
                 except Exception as e:
@@ -2606,7 +2837,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             self.write(f"Bad Gateway: {str(e)}")
     
     def _inject_ui(self, html_content, username):
-        """Injectează UI-ul în răspunsurile HTML"""
+        """Injects UI into HTML responses"""
         try:
             # Elimină CSP-ul care ar putea bloca resursele noastre
             html_content = re.sub(
@@ -2867,12 +3098,16 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
         log.info(f"WebSocket connecting for user {self.username} to {comfy_ws_url}")
         
         try:
-            # Construim URL-ul cu parametrii în query string pentru a transmite sesiunea
+            # Build URL with parameters in query string to transmit session
             parsed_url = urlparse(comfy_ws_url)
             query_params = []
             if parsed_url.query:
                 query_params.append(parsed_url.query)
             
+            # Includem parametrii originali de la client (ex: clientId)
+            if self.request.query:
+                query_params.append(self.request.query)
+
             # Adăugăm session_id în query string
             if session_id:
                 query_params.append(f"session_id={session_id.decode()}")
@@ -2959,6 +3194,21 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
                         break
                     
                     if self.ws_connection and not self.ws_connection.is_closing():
+                        # Monitorizare terminare job via WebSocket
+                        if not isinstance(msg, bytes):
+                            try:
+                                ws_data = json.loads(msg)
+                                # "executing" cu node: null înseamnă că coada e goală sau job-ul s-a terminat
+                                if ws_data.get("type") == "executing" and ws_data.get("data", {}).get("node") is None:
+                                    prompt_id = ws_data.get("data", {}).get("prompt_id")
+                                    if prompt_id: record_job_end(prompt_id)
+                                # Alternativ, mesajul "executed" confirmă finalizarea unui nod terminal
+                                elif ws_data.get("type") == "executed":
+                                    prompt_id = ws_data.get("data", {}).get("prompt_id")
+                                    if prompt_id: record_job_end(prompt_id)
+                            except:
+                                pass
+
                         await self.write_message(msg, isinstance(msg, bytes))
                 except tornado.websocket.WebSocketClosedError:
                     log.info(f"WebSocket connection closed for user {self.username}")
@@ -3110,6 +3360,7 @@ def make_auth_app():
     return tornado.web.Application([
         # Auth routes
         (r"/login", LoginHandler),
+        (r"/admin/api/usage-stats", AdminUsageStatsHandler),
         (r"/logout", LogoutHandler),
         (r"/user-status", UserStatusHandler),
         (r"/user-settings", UserSettingsHandler),
@@ -3126,6 +3377,7 @@ def make_auth_app():
         
         # Session routes
         (r"/health", HealthHandler),
+        (r"/admin/api/terminate-session", AdminTerminateSessionHandler),
         (r"/check-session", SessionCheckHandler),
         (r"/refresh-session", SessionRefreshHandler),
         
@@ -3170,6 +3422,7 @@ def make_admin_app():
         (r"/admin/login", AdminLoginHandler),
         (r"/admin/logout", AdminLogoutHandler),
         (r"/admin/api/status", AdminStatusHandler),
+        (r"/admin/api/usage-stats", AdminUsageStatsHandler),
         (r"/admin/api/sessions", AdminSessionsHandler),
         (r"/admin/api/sessions/(.*)", AdminSessionsHandler),
         (r"/admin/api/users", AdminUsersHandler),
@@ -3181,6 +3434,9 @@ def make_admin_app():
         (r"/admin/api/security/password", AdminPasswordHandler),
         (r"/admin/api/nginx-auth/global", AdminNginxAuthGlobalHandler),
         (r"/admin/api/nginx-auth/user/(.*)", AdminNginxAuthUserHandler),
+        (r"/admin/api/server-settings", AdminServerSettingsHandler),
+        (r"/admin/api/restart", AdminRestartHandler),
+        (r"/admin/api/terminate-session", AdminTerminateSessionHandler),
         (r"/admin/api/workflow-settings", AdminWorkflowSettingsHandler),
         (r"/admin/api/chat/users", AdminChatUsersHandler),
         (r"/admin/api/chat/messages/(.*)", AdminChatMessagesHandler),
@@ -3232,13 +3488,17 @@ if __name__ == "__main__":
     admin_app = make_admin_app()
     
     try:
-        auth_app.listen(AUTH_PORT, "0.0.0.0")
-        admin_app.listen(ADMIN_PORT, "0.0.0.0")
+        # Use config ports directly
+        final_auth_port = config.get("auth_port", 7861)
+        final_admin_port = config.get("admin_port", 8199)
+
+        auth_app.listen(final_auth_port, "0.0.0.0", max_body_size=MAX_BUFFER_SIZE, max_buffer_size=MAX_BUFFER_SIZE)
+        admin_app.listen(final_admin_port, "0.0.0.0", max_body_size=MAX_BUFFER_SIZE, max_buffer_size=MAX_BUFFER_SIZE)
         
-        log.info(f"Auth server started on port {AUTH_PORT} (PROXY MODE)")
-        log.info(f"Admin server started on port {ADMIN_PORT}")
-        print(f"Auth server started on port {AUTH_PORT} (PROXY MODE)")
-        print(f"Admin interface started on port {ADMIN_PORT}")
+        log.info(f"Auth server started on port {final_auth_port} (PROXY MODE)")
+        log.info(f"Admin server started on port {final_admin_port}")
+        print(f"Auth server started on port {final_auth_port} (PROXY MODE)")
+        print(f"Admin interface started on port {final_admin_port}")
         print("Multi-user system active with full proxy support")
         print(f"Configuration will be saved to: {CONFIG_FILE}")
         print(f"Workflow directories will be created in: {WORKFLOW_ROOT_DIR}")
