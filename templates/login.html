@@ -52,7 +52,7 @@
                 // Update plugin notification
                 const pluginNotif = document.getElementById('plugin-notification');
                 if (data.plugins_active && data.plugins_active.length > 0) {
-                    pluginNotif.textContent = "Serverul este inrolat in Plugin-ul: " + data.plugins_active.join(", ");
+                    pluginNotif.textContent = "Server is enrolled in Plugin: " + data.plugins_active.join(", ");
                     pluginNotif.style.display = 'block';
                 } else {
                     pluginNotif.style.display = 'none';

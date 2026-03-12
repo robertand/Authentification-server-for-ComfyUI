@@ -291,6 +291,38 @@
         .chat-file-download-admin:hover {
             background: #218838;
         }
+
+        /* PDF Export Styles (Synced with Aggregator) */
+        @media print { .no-pdf { display: none !important; } }
+        .pdf-avoid-break { page-break-inside: avoid !important; break-inside: avoid !important; margin-bottom: 20px; }
+        .pdf-page-break { page-break-before: always !important; break-before: always !important; height: 10px; }
+        .pdf-spacer { display: none; }
+        .pdf-mode .pdf-spacer { display: block !important; height: 5mm !important; }
+        .pdf-mode { background-color: #1a1a1a !important; color: #ffffff !important; width: 100% !important; }
+        .pdf-mode table { width: 100% !important; border-collapse: collapse !important; }
+        .pdf-mode th, .pdf-mode td { border: 1px solid #444 !important; padding: 8px !important; text-align: left !important; }
+        .pdf-mode canvas { max-width: 100% !important; height: auto !important; }
+        .pdf-mode .pdf-pie-container { margin-top: -30px !important; transform: translateY(-10px); }
+        .pdf-mode .nginx-section { border: 1px solid #444 !important; background: #222 !important; margin-bottom: 20px !important; }
+
+        /* Spacing Control Styles */
+        .spacing-control {
+            background: #333;
+            padding: 10px 15px;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+            border: 1px solid #444;
+        }
+        .spacing-control label {
+            margin-bottom: 0;
+            white-space: nowrap;
+        }
+        .spacing-control input[type="range"] {
+            flex: 1;
+        }
     </style>
 </head>
 <body>
@@ -545,7 +577,7 @@
                     <div id="analytics-date-display" style="font-size: 18px; font-weight: bold; color: #007bff;"></div>
                 </div>
 
-                <div class="nginx-section" style="display: flex; gap: 10px; align-items: center; background: #333;">
+                <div class="nginx-section no-pdf" data-html2canvas-ignore="true" style="display: flex; gap: 10px; align-items: center; background: #333;">
                     <button onclick="changeAnalyticsDate(-1)">← Previous Day</button>
                     <button onclick="setAnalyticsDate('today')">Today</button>
                     <button onclick="changeAnalyticsDate(1)">Next Day →</button>
@@ -559,44 +591,63 @@
                     <button class="security" onclick="exportToPDF()" style="margin-left: auto;">Export to PDF</button>
                 </div>
 
-                <div class="nginx-section" style="display: flex; gap: 20px; flex-wrap: wrap;">
+                <div class="nginx-section pdf-avoid-break" style="display: flex; gap: 20px; flex-wrap: wrap;">
                     <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                        <h3 style="margin-top:0;">Jobs per User</h3>
+                        <h3 style="margin-top:0;">Number of Executed Jobs</h3>
                         <canvas id="jobsChart"></canvas>
                     </div>
                     <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                        <h3 style="margin-top:0;">Total Time per User</h3>
+                        <h3 style="margin-top:0;">Time Spent (User Logged In)</h3>
                         <canvas id="timeChart"></canvas>
                     </div>
-                    <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                        <h3 id="timeline-chart-title" style="margin-top:0;">Activity Timeline</h3>
+                </div>
+
+                <div id="timeline-spacer" class="pdf-page-break" style="height: 250px;"></div>
+
+                <div class="nginx-section pdf-avoid-break" style="margin-top: 20px;">
+                    <h3 id="timeline-chart-title" style="margin-top:0;">Activity Timeline (Server Usage)</h3>
+                    <div style="height: 400px; width: 100%;">
                         <canvas id="timelineChart"></canvas>
                     </div>
-                    <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
-                        <h3 style="margin-top:0;">Server Distribution</h3>
-                        <div id="total-hours-display" style="text-align: center; margin-bottom: 10px; font-weight: bold; color: #28a745;"></div>
-                        <div style="max-height: 300px; display: flex; justify-content: center;">
-                            <canvas id="serverPieChart"></canvas>
+                </div>
+
+                <div id="pie-spacer" class="pdf-page-break" style="height: 175px;"></div>
+
+                <div class="nginx-section pdf-avoid-break pdf-pie-container" style="margin-top: 20px;">
+                    <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 45%;">
+                            <h3 style="margin-top:0; text-align: center;">Job Distribution per Server</h3>
+                            <div style="max-height: 300px; display: flex; justify-content: center;">
+                                <canvas id="serverPieChart"></canvas>
+                            </div>
+                        </div>
+                        <div style="flex: 1; min-width: 45%;">
+                            <h3 style="margin-top:0; text-align: center;">Total Logged Time (Time spent with user open)</h3>
+                            <div id="total-hours-display" style="text-align: center; margin-bottom: 10px; font-weight: bold; color: #28a745;"></div>
+                            <div style="max-height: 300px; display: flex; justify-content: center;">
+                                <canvas id="occupancyPieChart"></canvas>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="nginx-section">
+                <div class="nginx-section pdf-avoid-break">
                     <h3>Active Jobs (Real-time)</h3>
                     <div id="activeJobsGrid" class="status-grid">
                         <!-- Active jobs here -->
                     </div>
                 </div>
 
-                <div class="nginx-section">
+                <div class="nginx-section pdf-avoid-break">
                     <h3>Detailed User Statistics</h3>
                     <table>
                         <thead>
                             <tr>
                                 <th>User</th>
                                 <th>Total Jobs</th>
-                                <th>Total Time</th>
-                                <th>Average Time</th>
+                                <th>Job Time</th>
+                                <th>Avg Job Time</th>
+                                <th>Session Time (Occupancy)</th>
                             </tr>
                         </thead>
                         <tbody id="userStatsTable">
@@ -605,7 +656,25 @@
                     </table>
                 </div>
 
-                <div class="nginx-section">
+                <div class="nginx-section pdf-avoid-break">
+                    <h3>Session History (Logins/Logouts)</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>User</th>
+                                <th>Login Time</th>
+                                <th>Logout Time</th>
+                                <th>Duration</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sessionStatsTable">
+                            <!-- Session stats here -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="nginx-section pdf-avoid-break">
                     <h3>Server Statistics</h3>
                     <table>
                         <thead>
@@ -677,15 +746,49 @@
         let timeChart = null;
         let timelineChart = null;
         let serverPieChart = null;
+        let occupancyPieChart = null;
 
         let currentAnalyticsDate = new Date();
         let usageHistoryData = [];
+        let sessionHistoryData = [];
+        const userColors = {};
+
+        function getUserColor(username) {
+            if (userColors[username]) return userColors[username];
+            const colors = [
+                'rgba(255, 99, 132, 0.6)',
+                'rgba(54, 162, 235, 0.6)',
+                'rgba(255, 206, 86, 0.6)',
+                'rgba(75, 192, 192, 0.6)',
+                'rgba(153, 102, 255, 0.6)',
+                'rgba(255, 159, 64, 0.6)',
+                'rgba(199, 199, 199, 0.6)',
+                'rgba(233, 30, 99, 0.6)',
+                'rgba(156, 39, 176, 0.6)',
+                'rgba(103, 58, 183, 0.6)',
+                'rgba(63, 81, 181, 0.6)',
+                'rgba(33, 150, 243, 0.6)',
+                'rgba(0, 188, 212, 0.6)',
+                'rgba(0, 150, 136, 0.6)',
+                'rgba(76, 175, 80, 0.6)',
+                'rgba(139, 195, 74, 0.6)',
+                'rgba(205, 220, 57, 0.6)',
+                'rgba(255, 235, 59, 0.6)',
+                'rgba(255, 193, 7, 0.6)',
+                'rgba(255, 152, 0, 0.6)'
+            ];
+            const color = colors[Object.keys(userColors).length % colors.length];
+            userColors[username] = color;
+            return color;
+        }
 
         function showTab(tabName) {
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
             
-            event.target.classList.add('active');
+            const selectedTab = Array.from(document.querySelectorAll('.tab')).find(t => t.textContent.toLowerCase().includes(tabName.toLowerCase()));
+            if (selectedTab) selectedTab.classList.add('active');
+
             document.getElementById(tabName).classList.add('active');
             
             if (tabName === 'chat') {
@@ -1201,16 +1304,16 @@
         }
 
         function restartServer() {
-            if (!confirm('Sunteți sigur că doriți să restartați serverul? Această acțiune va deconecta toți utilizatorii activi.')) return;
+            if (!confirm('Are you sure you want to restart the server? This action will disconnect all active users.')) return;
 
             const messageDiv = document.getElementById('serverSettingsMessage');
-            messageDiv.innerHTML = '<div style="color: #ffc107;">Restartarea a fost solicitată...</div>';
+            messageDiv.innerHTML = '<div style="color: #ffc107;">Restart requested...</div>';
 
             fetch('/admin/api/restart', { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
-                        messageDiv.innerHTML = '<div style="color: #28a745;">Serverul se restartează. Reîncărcați pagina peste câteva secunde.</div>';
+                        messageDiv.innerHTML = '<div style="color: #28a745;">Server is restarting. Reload the page in a few seconds.</div>';
                         // Optionally redirect after a delay
                         setTimeout(() => {
                             const newAdminPort = document.getElementById('adminPort').value;
@@ -1224,8 +1327,8 @@
                     }
                 })
                 .catch(err => {
-                    console.error('Eroare restart:', err);
-                    messageDiv.innerHTML = '<div style="color: #dc3545;">Eroare la restart. Verificați logurile serverului.</div>';
+                    console.error('Restart error:', err);
+                    messageDiv.innerHTML = '<div style="color: #dc3545;">Restart error. Check server logs.</div>';
                 });
         }
 
@@ -1557,6 +1660,17 @@
                 .then(r => r.json())
                 .then(data => {
                     usageHistoryData = data.history;
+
+                    // Merge active sessions for visualization
+                    const now = Date.now() / 1000;
+                    const activeSessions = Object.values(data.active_sessions || {}).map(s => ({
+                        ...s,
+                        end_time: now,
+                        duration: now - s.start_time,
+                        is_active: true
+                    }));
+                    sessionHistoryData = [...(data.session_history || []), ...activeSessions];
+
                     updateActiveJobs(data.active_jobs);
                     updateAnalyticsView();
                     updateUsageHistory(data.history);
@@ -1588,6 +1702,7 @@
             const timelineTitle = document.getElementById('timeline-chart-title');
 
             let filteredHistory = [];
+            let filteredSessions = [];
             const d = currentAnalyticsDate;
 
             if (viewType === 'daily') {
@@ -1595,33 +1710,55 @@
                 dateDisplay.textContent = dayStr;
                 timelineTitle.textContent = 'Hourly Activity';
 
+                const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000;
+                const endOfDay = startOfDay + 86400;
+
                 filteredHistory = usageHistoryData.filter(job => {
                     const jobDate = new Date(job.end_time * 1000);
                     return jobDate.getFullYear() === d.getFullYear() &&
                            jobDate.getMonth() === d.getMonth() &&
                            jobDate.getDate() === d.getDate();
                 });
+
+                filteredSessions = sessionHistoryData.filter(s => {
+                    return s.start_time < endOfDay && s.end_time > startOfDay;
+                });
             } else if (viewType === 'monthly') {
                 const monthStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
                 dateDisplay.textContent = monthStr;
                 timelineTitle.textContent = 'Daily Activity';
+
+                const startOfMonth = new Date(d.getFullYear(), d.getMonth(), 1).getTime() / 1000;
+                const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime() / 1000;
 
                 filteredHistory = usageHistoryData.filter(job => {
                     const jobDate = new Date(job.end_time * 1000);
                     return jobDate.getFullYear() === d.getFullYear() &&
                            jobDate.getMonth() === d.getMonth();
                 });
+
+                filteredSessions = sessionHistoryData.filter(s => {
+                    return s.start_time < endOfMonth && s.end_time > startOfMonth;
+                });
             } else if (viewType === 'yearly') {
                 dateDisplay.textContent = d.getFullYear();
                 timelineTitle.textContent = 'Monthly Activity';
+
+                const startOfYear = new Date(d.getFullYear(), 0, 1).getTime() / 1000;
+                const endOfYear = new Date(d.getFullYear() + 1, 0, 1).getTime() / 1000;
 
                 filteredHistory = usageHistoryData.filter(job => {
                     const jobDate = new Date(job.end_time * 1000);
                     return jobDate.getFullYear() === d.getFullYear();
                 });
+
+                filteredSessions = sessionHistoryData.filter(s => {
+                    return s.start_time < endOfYear && s.end_time > startOfYear;
+                });
             }
 
-            updateStatsTables(filteredHistory);
+            updateStatsTables(filteredHistory, filteredSessions);
+            updateUsageHistory(filteredHistory, filteredSessions);
         }
 
         function formatDuration(seconds) {
@@ -1642,7 +1779,7 @@
 
             const jobs = Object.values(activeJobs);
             if (jobs.length === 0) {
-                grid.innerHTML = '<p style="padding: 10px; color: #888;">Niciun job în curs de procesare.</p>';
+                grid.innerHTML = '<p style="padding: 10px; color: #888;">No jobs currently processing.</p>';
                 return;
             }
 
@@ -1651,23 +1788,23 @@
                 card.className = 'status-card limited';
                 const elapsed = Math.floor(Date.now() / 1000 - job.start_time);
                 card.innerHTML = `
-                    <h4>Utilizator: ${job.user}</h4>
+                    <h4>User: ${job.user}</h4>
                     <p>Server: ${job.server}</p>
-                    <p>ID Prompt: ${job.prompt_id.substring(0, 8)}...</p>
-                    <p>Timp scurs: ${elapsed}s</p>
+                    <p>Prompt ID: ${job.prompt_id.substring(0, 8)}...</p>
+                    <p>Elapsed Time: ${elapsed}s</p>
                 `;
                 grid.appendChild(card);
             });
         }
 
-        function updateStatsTables(history) {
+        function updateStatsTables(history, sessions) {
             const userStats = {};
             const serverStats = {};
             let grandTotalSeconds = 0;
 
             history.forEach(job => {
                 // Per User
-                if (!userStats[job.user]) userStats[job.user] = { count: 0, time: 0 };
+                if (!userStats[job.user]) userStats[job.user] = { count: 0, time: 0, sessionTime: 0 };
                 userStats[job.user].count++;
                 userStats[job.user].time += job.duration;
                 grandTotalSeconds += job.duration;
@@ -1677,11 +1814,18 @@
                 serverStats[job.server]++;
             });
 
+            // Add session time to user stats
+            sessions.forEach(sess => {
+                if (!userStats[sess.user]) userStats[sess.user] = { count: 0, time: 0, sessionTime: 0 };
+                userStats[sess.user].sessionTime += sess.duration;
+            });
+
             const sortedUsers = Object.entries(userStats).sort((a,b) => b[1].count - a[1].count);
 
-            // Total hours accumulated
-            const totalHours = (grandTotalSeconds / 3600).toFixed(2);
-            document.getElementById('total-hours-display').textContent = `Total Accumulated: ${totalHours} Hours`;
+            // Total hours accumulated (Session based as requested)
+            const totalSessionSeconds = sessions.reduce((acc, s) => acc + s.duration, 0);
+            const totalHours = (totalSessionSeconds / 3600).toFixed(2);
+            document.getElementById('total-hours-display').textContent = `Total Occupancy: ${totalHours} Hours`;
 
             // Fill User Table
             const userTable = document.getElementById('userStatsTable');
@@ -1692,13 +1836,42 @@
                     <td>${user}</td>
                     <td>${stats.count}</td>
                     <td>${formatDuration(stats.time)}</td>
-                    <td>${formatDuration(stats.time / stats.count)}</td>
+                    <td>${stats.count > 0 ? formatDuration(stats.time / stats.count) : '0s'}</td>
+                    <td style="color: #28a745; font-weight: bold;">${formatDuration(stats.sessionTime)}</td>
                 `;
                 userTable.appendChild(row);
             });
 
+            // Fill Session Table
+            const sessionTable = document.getElementById('sessionStatsTable');
+            sessionTable.innerHTML = '';
+            const viewType = document.getElementById('analytics-view-type').value;
+
+            [...sessions].reverse().slice(0, 50).forEach(sess => {
+                const row = document.createElement('tr');
+                const status = sess.is_active ? '<span style="color:#ffc107;">Active</span>' : 'Finished';
+
+                // Show date for Monthly/Yearly views
+                const timeStr = viewType === 'daily' ?
+                    new Date(sess.start_time * 1000).toLocaleTimeString() :
+                    new Date(sess.start_time * 1000).toLocaleString();
+
+                const logoutStr = sess.is_active ? '-' : (viewType === 'daily' ?
+                    new Date(sess.end_time * 1000).toLocaleTimeString() :
+                    new Date(sess.end_time * 1000).toLocaleString());
+
+                row.innerHTML = `
+                    <td>${sess.user}</td>
+                    <td>${timeStr}</td>
+                    <td>${logoutStr}</td>
+                    <td>${formatDuration(sess.duration)}</td>
+                    <td>${status}</td>
+                `;
+                sessionTable.appendChild(row);
+            });
+
             // Update Charts
-            updateCharts(sortedUsers, serverStats, history);
+            updateCharts(sortedUsers, serverStats, history, sessions);
 
             // Fill Server Table
             const serverTable = document.getElementById('serverStatsTable');
@@ -1710,23 +1883,10 @@
             });
         }
 
-        function updateCharts(sortedUsers, serverStats, history) {
+        function updateCharts(sortedUsers, serverStats, history, sessions) {
             const labels = sortedUsers.map(u => u[0]);
             const jobsData = sortedUsers.map(u => u[1].count);
-            const timeData = sortedUsers.map(u => u[1].time / 60); // In minutes
-
-            const colors = [
-                'rgba(255, 99, 132, 0.8)',
-                'rgba(54, 162, 235, 0.8)',
-                'rgba(255, 206, 86, 0.8)',
-                'rgba(75, 192, 192, 0.8)',
-                'rgba(153, 102, 255, 0.8)',
-                'rgba(255, 159, 64, 0.8)',
-                'rgba(199, 199, 199, 0.8)',
-                'rgba(83, 102, 255, 0.8)',
-                'rgba(40, 159, 64, 0.8)',
-                'rgba(210, 199, 199, 0.8)',
-            ];
+            const timeData = sortedUsers.map(u => u[1].sessionTime / 60); // In minutes (Occupancy)
 
             const commonOptions = {
                 responsive: true,
@@ -1748,9 +1908,11 @@
 
             // Jobs Chart
             const jobsCtx = document.getElementById('jobsChart').getContext('2d');
+            const userColorsList = labels.map(u => getUserColor(u));
             if (jobsChart) {
                 jobsChart.data.labels = labels;
                 jobsChart.data.datasets[0].data = jobsData;
+                jobsChart.data.datasets[0].backgroundColor = userColorsList;
                 jobsChart.update();
             } else {
                 jobsChart = new Chart(jobsCtx, {
@@ -1759,7 +1921,7 @@
                         labels: labels,
                         datasets: [{
                             data: jobsData,
-                            backgroundColor: colors,
+                            backgroundColor: userColorsList,
                             borderRadius: 5
                         }]
                     },
@@ -1772,6 +1934,7 @@
             if (timeChart) {
                 timeChart.data.labels = labels;
                 timeChart.data.datasets[0].data = timeData;
+                timeChart.data.datasets[0].backgroundColor = userColorsList;
                 timeChart.update();
             } else {
                 timeChart = new Chart(timeCtx, {
@@ -1780,7 +1943,7 @@
                         labels: labels,
                         datasets: [{
                             data: timeData,
-                            backgroundColor: colors,
+                            backgroundColor: userColorsList,
                             borderRadius: 5
                         }]
                     },
@@ -1792,9 +1955,11 @@
             const serverLabels = Object.keys(serverStats);
             const serverData = Object.values(serverStats);
             const pieCtx = document.getElementById('serverPieChart').getContext('2d');
+            const serverColors = serverLabels.map((_, i) => `hsl(${(i * 137.5) % 360}, 70%, 60%)`);
             if (serverPieChart) {
                 serverPieChart.data.labels = serverLabels;
                 serverPieChart.data.datasets[0].data = serverData;
+                serverPieChart.data.datasets[0].backgroundColor = serverColors;
                 serverPieChart.update();
             } else {
                 serverPieChart = new Chart(pieCtx, {
@@ -1803,7 +1968,7 @@
                         labels: serverLabels,
                         datasets: [{
                             data: serverData,
-                            backgroundColor: colors,
+                            backgroundColor: serverColors,
                             borderWidth: 0
                         }]
                     },
@@ -1812,101 +1977,200 @@
                         plugins: {
                             legend: {
                                 display: true,
-                                position: 'right',
-                                labels: { color: '#aaa' }
+                                position: 'bottom',
+                                labels: { color: '#aaa', boxWidth: 10 }
                             }
                         }
                     }
                 });
             }
 
-            // Timeline Chart (Last 24h)
-            const timelineData = Array(24).fill(0);
-            const now = Date.now() / 1000;
-            const hourLabels = [];
-            for (let i = 23; i >= 0; i--) {
-                const d = new Date((now - i * 3600) * 1000);
-                hourLabels.push(d.getHours() + ':00');
+            // Occupancy Pie Chart
+            const occLabels = sortedUsers.map(u => u[0]);
+            const occData = sortedUsers.map(u => u[1].sessionTime / 3600); // In hours
+            const occColors = occLabels.map(u => getUserColor(u));
+            const occCtx = document.getElementById('occupancyPieChart').getContext('2d');
+
+            if (occupancyPieChart) {
+                occupancyPieChart.data.labels = occLabels;
+                occupancyPieChart.data.datasets[0].data = occData;
+                occupancyPieChart.data.datasets[0].backgroundColor = occColors;
+                occupancyPieChart.update();
+            } else {
+                occupancyPieChart = new Chart(occCtx, {
+                    type: 'pie',
+                    data: {
+                        labels: occLabels,
+                        datasets: [{
+                            data: occData,
+                            backgroundColor: occColors,
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'bottom',
+                                labels: { color: '#aaa', boxWidth: 10 }
+                            }
+                        }
+                    }
+                });
             }
-
-            history.forEach(job => {
-                const diffHours = Math.floor((now - job.end_time) / 3600);
-                if (diffHours >= 0 && diffHours < 24) {
-                    timelineData[23 - diffHours]++;
-                }
-            });
-
-            const timelineCtx = document.getElementById('timelineChart').getContext('2d');
-
-            // Create Gradient
-            const gradient = timelineCtx.createLinearGradient(0, 0, 0, 400);
-            gradient.addColorStop(0, 'rgba(0, 123, 255, 0.5)');
-            gradient.addColorStop(1, 'rgba(0, 123, 255, 0)');
-
 
             // Timeline Logic Based on View Type
             const viewType = document.getElementById('analytics-view-type').value;
             let timeLabels = [];
-            let timeValues = [];
-            let chartLabel = "Jobs";
+            let jobsValues = [];
+            let sessionsPerUser = {}; // user -> array of values
+
+            const d = currentAnalyticsDate;
 
             if (viewType === 'daily') {
-                timeValues = Array(24).fill(0);
                 for (let i = 0; i < 24; i++) timeLabels.push(i + ':00');
+                jobsValues = Array(24).fill(0);
                 history.forEach(job => {
                     const h = new Date(job.end_time * 1000).getHours();
-                    timeValues[h]++;
+                    jobsValues[h]++;
                 });
+
+                // Session active minutes per hour
+                const users = [...new Set(sessions.map(s => s.user))];
+                users.forEach(user => {
+                    sessionsPerUser[user] = Array(24).fill(0);
+                    const userSess = sessions.filter(s => s.user === user);
+                    for (let h = 0; h < 24; h++) {
+                        const hStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h).getTime() / 1000;
+                        const hEnd = hStart + 3600;
+                        userSess.forEach(s => {
+                            const overlap = Math.max(0, Math.min(s.end_time, hEnd) - Math.max(s.start_time, hStart));
+                            sessionsPerUser[user][h] += overlap / 60; // in minutes
+                        });
+                    }
+                });
+
             } else if (viewType === 'monthly') {
-                const daysInMonth = new Date(currentAnalyticsDate.getFullYear(), currentAnalyticsDate.getMonth() + 1, 0).getDate();
-                timeValues = Array(daysInMonth).fill(0);
+                const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
                 for (let i = 1; i <= daysInMonth; i++) timeLabels.push(i);
+                jobsValues = Array(daysInMonth).fill(0);
                 history.forEach(job => {
-                    const d = new Date(job.end_time * 1000).getDate();
-                    timeValues[d-1]++;
+                    const day = new Date(job.end_time * 1000).getDate();
+                    jobsValues[day-1]++;
                 });
+
+                const users = [...new Set(sessions.map(s => s.user))];
+                users.forEach(user => {
+                    sessionsPerUser[user] = Array(daysInMonth).fill(0);
+                    const userSess = sessions.filter(s => s.user === user);
+                    for (let day = 1; day <= daysInMonth; day++) {
+                        const dStart = new Date(d.getFullYear(), d.getMonth(), day).getTime() / 1000;
+                        const dEnd = dStart + 86400;
+                        userSess.forEach(s => {
+                            const overlap = Math.max(0, Math.min(s.end_time, dEnd) - Math.max(s.start_time, dStart));
+                            sessionsPerUser[user][day-1] += overlap / 3600; // in hours
+                        });
+                    }
+                });
+
             } else if (viewType === 'yearly') {
-                timeValues = Array(12).fill(0);
                 timeLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                jobsValues = Array(12).fill(0);
                 history.forEach(job => {
                     const m = new Date(job.end_time * 1000).getMonth();
-                    timeValues[m]++;
+                    jobsValues[m]++;
+                });
+
+                const users = [...new Set(sessions.map(s => s.user))];
+                users.forEach(user => {
+                    sessionsPerUser[user] = Array(12).fill(0);
+                    const userSess = sessions.filter(s => s.user === user);
+                    for (let m = 0; m < 12; m++) {
+                        const mStart = new Date(d.getFullYear(), m, 1).getTime() / 1000;
+                        const mEnd = new Date(d.getFullYear(), m + 1, 1).getTime() / 1000;
+                        userSess.forEach(s => {
+                            const overlap = Math.max(0, Math.min(s.end_time, mEnd) - Math.max(s.start_time, mStart));
+                            sessionsPerUser[user][m] += overlap / 3600; // in hours
+                        });
+                    }
                 });
             }
 
+            const timelineCtx = document.getElementById('timelineChart').getContext('2d');
+            const datasets = [];
+
+            // Session Duration Area Datasets (Background)
+            Object.entries(sessionsPerUser).forEach(([user, values]) => {
+                datasets.push({
+                    label: `${user} Active`,
+                    data: values,
+                    backgroundColor: getUserColor(user),
+                    borderColor: 'transparent',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0,
+                    yAxisID: 'ySession'
+                });
+            });
+
+            // Jobs Line Dataset (Foreground - On top)
+            datasets.push({
+                label: 'Jobs Executed',
+                data: jobsValues,
+                borderColor: '#007bff',
+                borderWidth: 3,
+                backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                fill: false,
+                tension: 0.4,
+                pointRadius: 4,
+                pointBackgroundColor: '#007bff',
+                yAxisID: 'yJobs'
+            });
+
             if (timelineChart) {
                 timelineChart.data.labels = timeLabels;
-                timelineChart.data.datasets[0].data = timeValues;
-                timelineChart.data.datasets[0].backgroundColor = gradient;
+                timelineChart.data.datasets = datasets;
                 timelineChart.update();
             } else {
                 timelineChart = new Chart(timelineCtx, {
                     type: 'line',
                     data: {
                         labels: timeLabels,
-                        datasets: [{
-                            label: chartLabel,
-                            data: timeValues,
-                            borderColor: '#007bff',
-                            borderWidth: 3,
-                            backgroundColor: gradient,
-                            fill: true,
-                            tension: 0.4,
-                            pointRadius: 4,
-                            pointBackgroundColor: '#007bff',
-                            pointHoverRadius: 6
-                        }]
+                        datasets: datasets
                     },
                     options: {
                         ...commonOptions,
                         plugins: {
-                            legend: { display: false },
+                            legend: { display: true, labels: { color: '#aaa', boxWidth: 10 } },
                             tooltip: {
+                                mode: 'index',
+                                intersect: false,
                                 backgroundColor: 'rgba(0,0,0,0.8)',
-                                padding: 10,
-                                titleColor: '#007bff',
-                                bodyColor: '#fff',
-                                displayColors: false
+                                padding: 10
+                            }
+                        },
+                        scales: {
+                            yJobs: {
+                                type: 'linear',
+                                position: 'left',
+                                beginAtZero: true,
+                                title: { display: true, text: 'Number of Jobs', color: '#007bff' },
+                                grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                                ticks: { color: '#aaa' }
+                            },
+                            ySession: {
+                                type: 'linear',
+                                position: 'right',
+                                beginAtZero: true,
+                                stacked: true,
+                                title: { display: true, text: viewType === 'daily' ? 'Active Minutes' : 'Active Hours', color: '#28a745' },
+                                grid: { display: false },
+                                ticks: { color: '#aaa' }
+                            },
+                            x: {
+                                grid: { display: false },
+                                ticks: { color: '#aaa' }
                             }
                         }
                     }
@@ -1914,16 +2178,50 @@
             }
         }
 
-        function updateUsageHistory(history) {
+        function updateUsageHistory(history, sessions) {
             const logDiv = document.getElementById('usageHistory');
             logDiv.innerHTML = '';
 
-            // Revers cronologic
-            [...history].reverse().slice(0, 50).forEach(job => {
-                const timeStr = new Date(job.end_time * 1000).toLocaleString();
+            // Combine jobs and session events into a single timeline
+            const events = [];
+
+            history.forEach(job => {
+                events.push({
+                    time: job.end_time,
+                    user: job.user,
+                    type: 'job',
+                    msg: `finished job on ${job.server} (${job.duration.toFixed(1)}s)`,
+                    color: '#28a745'
+                });
+            });
+
+            sessions.forEach(sess => {
+                events.push({
+                    time: sess.start_time,
+                    user: sess.user,
+                    type: 'login',
+                    msg: `logged in`,
+                    color: '#007bff'
+                });
+                if (!sess.is_active) {
+                    events.push({
+                        time: sess.end_time,
+                        user: sess.user,
+                        type: 'logout',
+                        msg: `logged out (Duration: ${formatDuration(sess.duration)})`,
+                        color: '#dc3545'
+                    });
+                }
+            });
+
+            // Sort by time descending
+            events.sort((a, b) => b.time - a.time);
+
+            events.slice(0, 100).forEach(evt => {
+                const timeStr = new Date(evt.time * 1000).toLocaleString();
                 const p = document.createElement('p');
                 p.style.margin = '2px 0';
-                p.innerHTML = `<span style="color: #28a745;">[${timeStr}]</span> <strong>${job.user}</strong> finished job on ${job.server} (${job.duration.toFixed(1)}s)`;
+                p.innerHTML = `<span style="color: ${evt.color};">[${timeStr}]</span> <strong>${evt.user}</strong> ${evt.msg}`;
                 logDiv.appendChild(p);
             });
         }
@@ -1933,20 +2231,21 @@
             const viewType = document.getElementById('analytics-view-type').value;
             const dateStr = document.getElementById('analytics-date-display').textContent;
 
+            element.classList.add('pdf-mode');
+
             const opt = {
-                margin:       10,
-                filename:     `Usage_Report_${viewType}_${dateStr.replace(/ /g, '_')}.pdf`,
-                image:        { type: 'jpeg', quality: 0.98 },
-                html2canvas:  { scale: 2, backgroundColor: '#1a1a1a' },
-                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                margin: [15, 10, 15, 10],
+                filename: `Usage_Report_${viewType}_${dateStr.replace(/ /g, '_')}.pdf`,
+                html2canvas: { scale: 2, backgroundColor: '#1a1a1a', useCORS: true },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                pagebreak: { mode: ['css', 'legacy'] }
             };
 
-            // Temporary adjust styles for PDF
-            const originalStyle = element.style.color;
-            element.style.color = '#fff';
-
             html2pdf().set(opt).from(element).save().then(() => {
-                element.style.color = originalStyle;
+                element.classList.remove('pdf-mode');
+            }).catch(err => {
+                console.error('PDF Export Error:', err);
+                element.classList.remove('pdf-mode');
             });
         }
 

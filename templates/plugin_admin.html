@@ -6,29 +6,51 @@
     th, td { padding: 12px; border: 1px solid #444; text-align: left; }
     th { background: #333; }
     .btn-del { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; }
-</style>
-</head>
-<body style="background: #1a1a1a;">
-    <div class="container" style="max-width: 800px;">
-        <div class="login-title">Admin Aggregator</div>
 
-        <div style="background: #2a2a2a; padding: 20px; border-radius: 10px; margin-top: 20px;">
-            <h3>Adaugă Server Nou</h3>
+    /* PDF Export Styles */
+    @media print { .no-pdf { display: none !important; } }
+    .pdf-avoid-break { page-break-inside: avoid; break-inside: avoid; margin-bottom: 20px; }
+    .pdf-page-break { page-break-before: always !important; break-before: always !important; }
+    .pdf-spacer { display: none; }
+    .pdf-mode .pdf-spacer { display: block !important; height: 5mm !important; }
+    .pdf-mode { background-color: #1a1a1a !important; color: #ffffff !important; }
+    .pdf-mode table { width: 100% !important; border-collapse: collapse !important; }
+    .pdf-mode th, .pdf-mode td { border: 1px solid #444 !important; padding: 8px !important; text-align: left !important; }
+    .pdf-mode canvas { max-width: 100% !important; height: auto !important; }
+    .pdf-mode .pdf-pie-container { margin-top: -30px !important; transform: translateY(-10px); }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body style="background: #1a1a1a; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+    <div class="container" style="max-width: 1200px; margin: 0 auto; padding: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+            <div class="login-title" style="margin: 0;">Aggregator Multi-Server Admin</div>
+            <button onclick="location.href='/logout'" style="background: #6c757d; width: auto; padding: 8px 20px;">Logout</button>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #444;">
+            <div class="tab active" id="tab-servers" onclick="showTab('servers')" style="padding: 10px 20px; cursor: pointer; background: #2a2a2a; border-radius: 5px 5px 0 0; border: 1px solid #444; border-bottom: none;">Servers</div>
+            <div class="tab" id="tab-analytics" onclick="showTab('analytics')" style="padding: 10px 20px; cursor: pointer;">Global Analytics</div>
+        </div>
+
+        <div id="content-servers">
+            <div style="background: #2a2a2a; padding: 20px; border-radius: 10px; margin-top: 20px;">
+                <h3>Add New Server</h3>
             <div style="display: flex; gap: 10px; margin-top: 10px;">
-                <input id="new-name" placeholder="Nume Server (ex: Server GPU 1)" style="width: 40%;">
-                <input id="new-url" placeholder="URL (ex: http://192.168.1.10:7861)" style="width: 40%;">
-                <button onclick="addServer()" style="width: 20%;">Adaugă</button>
+                <input id="new-name" placeholder="Server Name (e.g., GPU Server 1)" style="width: 40%;">
+                <input id="new-url" placeholder="URL (e.g., http://192.168.1.10:7861)" style="width: 40%;">
+                <button onclick="addServer()" style="width: 20%;">Add</button>
             </div>
         </div>
 
         <div style="background: #2a2a2a; padding: 20px; border-radius: 10px; margin-top: 20px;">
-            <h3>Servere Înrolate</h3>
+            <h3>Enrolled Servers</h3>
             <table>
                 <thead>
                     <tr>
-                        <th>Nume</th>
+                        <th>Name</th>
                         <th>URL</th>
-                        <th>Acțiuni</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -36,23 +58,379 @@
                     <tr>
                         <td>{{ server['display_name'] }}</td>
                         <td>{{ server['url'] }}</td>
-                        <td><button class="btn-del" onclick="deleteServer({{ i }})">Șterge</button></td>
+                        <td><button class="btn-del" onclick="deleteServer({{ i }})">Delete</button></td>
                     </tr>
                     {% end %}
                 </tbody>
             </table>
         </div>
 
-        <div style="margin-top: 20px; text-align: center;">
-            <a href="http://localhost:{{ config['port'] }}" target="_blank" style="color: #007bff;">Deschide Aggregator UI →</a>
+            <div style="margin-top: 20px; text-align: center;">
+                <a href="http://localhost:{{ config['port'] }}" target="_blank" style="color: #007bff;">Open Aggregator UI →</a>
+            </div>
+        </div>
+
+        <div id="content-analytics" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button onclick="changeGlobalDate(-1)">←</button>
+                    <button onclick="setGlobalDate('today')">Today</button>
+                    <button onclick="changeGlobalDate(1)">→</button>
+                    <select id="global-view-type" onchange="loadGlobalStats()" style="background: #333; color: white; padding: 5px; border-radius: 5px;">
+                        <option value="daily">Daily</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                    </select>
+                </div>
+                <button onclick="exportGlobalPDF()" style="background: #28a745; width: auto;">Export Global PDF</button>
+            </div>
+
+            <div id="pdf-export-container">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 style="margin:0;">Global Usage Analytics (Aggregator)</h2>
+                    <div id="global-analytics-date" style="font-size: 18px; font-weight: bold; color: #007bff;"></div>
+                </div>
+
+                <div class="pdf-avoid-break" style="display: flex; gap: 20px; flex-wrap: wrap; background: transparent; border: none; padding: 0;">
+                    <div style="flex: 1; min-width: 45%; background: #222; padding: 20px; border-radius: 10px;">
+                        <h3 style="margin-top:0;">Global Executed Jobs Count</h3>
+                        <div style="height: 300px;"><canvas id="globalJobsChart"></canvas></div>
+                    </div>
+                    <div style="flex: 1; min-width: 45%; background: #222; padding: 20px; border-radius: 10px;">
+                        <h3 style="margin-top:0;">Total Logged Time (Hours)</h3>
+                        <div style="height: 300px;"><canvas id="globalOccupancyChart"></canvas></div>
+                    </div>
+                </div>
+
+                <div class="pdf-page-break" style="height: 20px;"></div>
+
+                <div style="background: #222; padding: 20px; border-radius: 10px; margin-top: 20px;" class="pdf-avoid-break">
+                    <h3>Global Activity Timeline</h3>
+                    <div style="height: 400px; width: 100%;">
+                        <canvas id="globalTimelineChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="pdf-page-break" style="height: 10px;"></div>
+
+                <div class="pdf-avoid-break pdf-pie-container" style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 20px;">
+                    <div style="flex: 1; min-width: 45%; background: #222; padding: 20px; border-radius: 10px;">
+                        <h3 style="margin-top:0; text-align: center;">Job Distribution per Server</h3>
+                        <div style="max-height: 250px; display: flex; justify-content: center;">
+                            <canvas id="globalServerPieChart"></canvas>
+                        </div>
+                    </div>
+                    <div style="flex: 1; min-width: 45%; background: #222; padding: 20px; border-radius: 10px;">
+                        <h3 style="margin-top:0; text-align: center;">Total Logged Time per User</h3>
+                        <div style="max-height: 250px; display: flex; justify-content: center;">
+                            <canvas id="globalUserPieChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pdf-page-break" style="height: 20px;"></div>
+
+                <div style="background: #2a2a2a; padding: 20px; border-radius: 10px; margin-top: 20px;">
+                <h3>Global Session History (Last 50)</h3>
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table id="globalSessionTable">
+                        <thead>
+                            <tr>
+                                <th>Server</th>
+                                <th>User</th>
+                                <th>Login</th>
+                                <th>Logout</th>
+                                <th>Duration</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
+    let jobsChart = null;
+    let occupancyChart = null;
+    let timelineChart = null;
+    let serverPieChart = null;
+    let userPieChart = null;
+    let currentGlobalDate = new Date();
+
+    function showTab(name) {
+        document.querySelectorAll('.tab').forEach(t => {
+            t.classList.remove('active');
+            t.style.background = 'transparent';
+            t.style.border = 'none';
+        });
+        document.getElementById('tab-' + name).classList.add('active');
+        document.getElementById('tab-' + name).style.background = '#2a2a2a';
+        document.getElementById('tab-' + name).style.border = '1px solid #444';
+        document.getElementById('tab-' + name).style.borderBottom = 'none';
+
+        document.getElementById('content-servers').style.display = name === 'servers' ? 'block' : 'none';
+        document.getElementById('content-analytics').style.display = name === 'analytics' ? 'block' : 'none';
+
+        if (name === 'analytics') loadGlobalStats();
+    }
+
+    function formatDuration(seconds) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+        let res = "";
+        if (hours > 0) res += hours + "h ";
+        if (minutes > 0 || hours > 0) res += minutes + "m ";
+        res += secs + "s";
+        return res;
+    }
+
+    function setGlobalDate(val) {
+        if (val === 'today') currentGlobalDate = new Date();
+        loadGlobalStats();
+    }
+
+    function changeGlobalDate(delta) {
+        const viewType = document.getElementById('global-view-type').value;
+        if (viewType === 'daily') currentGlobalDate.setDate(currentGlobalDate.getDate() + delta);
+        else if (viewType === 'monthly') currentGlobalDate.setMonth(currentGlobalDate.getMonth() + delta);
+        else currentGlobalDate.setFullYear(currentGlobalDate.getFullYear() + delta);
+        loadGlobalStats();
+    }
+
+    function loadGlobalStats() {
+        const viewType = document.getElementById('global-view-type').value;
+        const d = currentGlobalDate;
+        let dateStr = "";
+        if (viewType === 'daily') dateStr = d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        else if (viewType === 'monthly') dateStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+        else dateStr = d.getFullYear();
+
+        document.getElementById('global-analytics-date').textContent = dateStr;
+
+        fetch('/api/global-stats')
+            .then(r => r.json())
+            .then(data => {
+                // Filter data based on date and viewType
+                const filteredHistory = data.history.filter(job => {
+                    const jobDate = new Date(job.end_time * 1000);
+                    if (viewType === 'daily') return jobDate.toDateString() === d.toDateString();
+                    if (viewType === 'monthly') return jobDate.getFullYear() === d.getFullYear() && jobDate.getMonth() === d.getMonth();
+                    return jobDate.getFullYear() === d.getFullYear();
+                });
+
+                let startOfRange, endOfRange;
+                if (viewType === 'daily') {
+                    startOfRange = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000;
+                    endOfRange = startOfRange + 86400;
+                } else if (viewType === 'monthly') {
+                    startOfRange = new Date(d.getFullYear(), d.getMonth(), 1).getTime() / 1000;
+                    endOfRange = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime() / 1000;
+                } else {
+                    startOfRange = new Date(d.getFullYear(), 0, 1).getTime() / 1000;
+                    endOfRange = new Date(d.getFullYear() + 1, 0, 1).getTime() / 1000;
+                }
+
+                const filteredSessions = data.session_history.filter(s => {
+                    return s.start_time < endOfRange && s.end_time > startOfRange;
+                });
+
+                updateCharts(filteredHistory, filteredSessions, viewType, d);
+                updateSessionTable(filteredSessions);
+            });
+    }
+
+    function getUserColor(username) {
+        const colors = [
+            'rgba(255, 99, 132, 0.6)', 'rgba(54, 162, 235, 0.6)', 'rgba(255, 206, 86, 0.6)',
+            'rgba(75, 192, 192, 0.6)', 'rgba(153, 102, 255, 0.6)', 'rgba(255, 159, 64, 0.6)'
+        ];
+        let hash = 0;
+        for (let i = 0; i < username.length; i++) hash = username.charCodeAt(i) + ((hash << 5) - hash);
+        return colors[Math.abs(hash) % colors.length];
+    }
+
+    function updateCharts(history, sessions, viewType, baseDate) {
+        const userStats = {};
+        const serverStats = {};
+
+        history.forEach(job => {
+            if (!userStats[job.user]) userStats[job.user] = { jobs: 0, time: 0 };
+            userStats[job.user].jobs++;
+            if (!serverStats[job.server_name]) serverStats[job.server_name] = 0;
+            serverStats[job.server_name]++;
+        });
+
+        sessions.forEach(sess => {
+            if (!userStats[sess.user]) userStats[sess.user] = { jobs: 0, time: 0 };
+            userStats[sess.user].time += sess.duration;
+        });
+
+        const userLabels = Object.keys(userStats).sort();
+        const jobsData = userLabels.map(l => userStats[l].jobs);
+        const occupancyData = userLabels.map(l => userStats[l].time / 3600);
+        const userColors = userLabels.map(l => getUserColor(l));
+
+        const commonOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#aaa' } },
+                x: { grid: { display: false }, ticks: { color: '#aaa' } }
+            }
+        };
+
+        const ctxJobs = document.getElementById('globalJobsChart').getContext('2d');
+        if (jobsChart) jobsChart.destroy();
+        jobsChart = new Chart(ctxJobs, {
+            type: 'bar',
+            data: { labels: userLabels, datasets: [{ data: jobsData, backgroundColor: userColors, borderRadius: 5 }] },
+            options: commonOptions
+        });
+
+        const ctxOcc = document.getElementById('globalOccupancyChart').getContext('2d');
+        if (occupancyChart) occupancyChart.destroy();
+        occupancyChart = new Chart(ctxOcc, {
+            type: 'bar',
+            data: { labels: userLabels, datasets: [{ data: occupancyData, backgroundColor: userColors, borderRadius: 5 }] },
+            options: commonOptions
+        });
+
+        // Pie Charts
+        const serverLabels = Object.keys(serverStats);
+        const serverData = Object.values(serverStats);
+        const serverColors = serverLabels.map((_, i) => `hsl(${(i * 137.5) % 360}, 70%, 60%)`);
+
+        if (serverPieChart) serverPieChart.destroy();
+        serverPieChart = new Chart(document.getElementById('globalServerPieChart'), {
+            type: 'pie',
+            data: { labels: serverLabels, datasets: [{ data: serverData, backgroundColor: serverColors, borderWidth: 0 }] },
+            options: { maintainAspectRatio: false, plugins: { legend: { display: true, position: 'bottom', labels: { color: '#aaa', boxWidth: 10 } } } }
+        });
+
+        if (userPieChart) userPieChart.destroy();
+        userPieChart = new Chart(document.getElementById('globalUserPieChart'), {
+            type: 'pie',
+            data: { labels: userLabels, datasets: [{ data: occupancyData, backgroundColor: userColors, borderWidth: 0 }] },
+            options: { maintainAspectRatio: false, plugins: { legend: { display: true, position: 'bottom', labels: { color: '#aaa', boxWidth: 10 } } } }
+        });
+
+        // Timeline Logic
+        let timelineLabels = [];
+        let timeSteps;
+        if (viewType === 'daily') timeSteps = 24;
+        else if (viewType === 'monthly') timeSteps = new Date(baseDate.getFullYear(), baseDate.getMonth() + 1, 0).getDate();
+        else timeSteps = 12;
+
+        const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        for (let i = 0; i < timeSteps; i++) {
+            if (viewType === 'daily') timelineLabels.push(i + ':00');
+            else if (viewType === 'monthly') timelineLabels.push((i + 1).toString());
+            else timelineLabels.push(monthLabels[i]);
+        }
+
+        const stepJobs = Array(timeSteps).fill(0);
+        history.forEach(job => {
+            const jobDate = new Date(job.end_time * 1000);
+            let index;
+            if (viewType === 'daily') index = jobDate.getHours();
+            else if (viewType === 'monthly') index = jobDate.getDate() - 1;
+            else index = jobDate.getMonth();
+            if (index < timeSteps) stepJobs[index]++;
+        });
+
+        const users = userLabels;
+        const timelineDatasets = users.map(user => {
+            const stepActive = Array(timeSteps).fill(0);
+            const userSess = sessions.filter(s => s.user === user);
+
+            let startOfRange;
+            if (viewType === 'daily') startOfRange = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate()).getTime() / 1000;
+            else if (viewType === 'monthly') startOfRange = new Date(baseDate.getFullYear(), baseDate.getMonth(), 1).getTime() / 1000;
+            else startOfRange = new Date(baseDate.getFullYear(), 0, 1).getTime() / 1000;
+
+            for (let i = 0; i < timeSteps; i++) {
+                let sStart, sEnd;
+                if (viewType === 'daily') {
+                    sStart = startOfRange + (i * 3600);
+                    sEnd = sStart + 3600;
+                } else if (viewType === 'monthly') {
+                    sStart = startOfRange + (i * 86400);
+                    sEnd = sStart + 86400;
+                } else {
+                    sStart = new Date(baseDate.getFullYear(), i, 1).getTime() / 1000;
+                    sEnd = new Date(baseDate.getFullYear(), i + 1, 1).getTime() / 1000;
+                }
+
+                userSess.forEach(s => {
+                    const overlap = Math.max(0, Math.min(s.end_time, sEnd) - Math.max(s.start_time, sStart));
+                    let val = 0;
+                    if (viewType === 'daily') val = overlap / 60; // minutes
+                    else val = overlap / 3600; // hours
+                    stepActive[i] += val;
+                });
+            }
+            return { label: `${user} (Logged Time)`, data: stepActive, backgroundColor: getUserColor(user), fill: true, tension: 0.4, yAxisID: 'yTime', pointRadius: 0 };
+        });
+
+        timelineDatasets.push({
+            label: 'Executed Jobs', data: stepJobs, borderColor: '#007bff', borderWidth: 3, pointRadius: 4, yAxisID: 'yJobs', type: 'line', fill: false
+        });
+
+        if (timelineChart) timelineChart.destroy();
+        timelineChart = new Chart(document.getElementById('globalTimelineChart'), {
+            type: 'line',
+            data: { labels: timelineLabels, datasets: timelineDatasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: true, labels: { color: '#aaa' } } },
+                scales: {
+                    yJobs: { position: 'left', beginAtZero: true, title: { display: true, text: 'Jobs', color: '#007bff' }, ticks: { color: '#aaa' } },
+                    yTime: { position: 'right', beginAtZero: true, stacked: true, title: { display: true, text: viewType === 'daily' ? 'Active Minutes' : 'Active Hours', color: '#28a745' }, grid: { display: false }, ticks: { color: '#aaa' } },
+                    x: { ticks: { color: '#aaa' } }
+                }
+            }
+        });
+    }
+
+    function exportGlobalPDF() {
+        const element = document.getElementById('pdf-export-container');
+        element.classList.add('pdf-mode');
+        const opt = {
+            margin: [15, 10, 15, 10],
+            filename: `Global_Usage_Report_${new Date().toISOString().split('T')[0]}.pdf`,
+            html2canvas: { scale: 2, backgroundColor: '#1a1a1a', useCORS: true },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+            pagebreak: { mode: ['css', 'legacy'] }
+        };
+        html2pdf().set(opt).from(element).save().then(() => {
+            element.classList.remove('pdf-mode');
+        });
+    }
+
+    function updateSessionTable(sessions) {
+        const tbody = document.querySelector('#globalSessionTable tbody');
+        tbody.innerHTML = '';
+        [...sessions].sort((a,b) => b.start_time - a.start_time).slice(0, 50).forEach(s => {
+            const row = tbody.insertRow();
+            row.innerHTML = `
+                <td>${s.server_name}</td>
+                <td>${s.user}</td>
+                <td>${new Date(s.start_time * 1000).toLocaleString()}</td>
+                <td>${s.is_active ? '-' : new Date(s.end_time * 1000).toLocaleString()}</td>
+                <td>${formatDuration(s.duration)}</td>
+                <td style="color: ${s.is_active ? '#ffc107' : '#28a745'}">${s.is_active ? 'Active' : 'Finished'}</td>
+            `;
+        });
+    }
     function addServer() {
         const name = document.getElementById('new-name').value;
         const url = document.getElementById('new-url').value;
-        if (!name || !url) return alert('Completează ambele câmpuri');
+        if (!name || !url) return alert('Please complete both fields');
 
         fetch('/api/servers', {
             method: 'POST',
@@ -61,7 +439,7 @@
     }
 
     function deleteServer(index) {
-        if (!confirm('Ești sigur că vrei să ștergi acest server?')) return;
+        if (!confirm('Are you sure you want to delete this server?')) return;
         fetch('/api/servers?index=' + index, { method: 'DELETE' })
             .then(() => location.reload());
     }

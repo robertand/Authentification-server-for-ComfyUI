@@ -63,10 +63,10 @@ function redirectToLogin() {
 }
 
 function logoutNow() {
-    // Închide modal-ul de expirare sesiune
+    // Close session expiry modal
     closeSessionExpiryModal();
     
-    // Face logout direct
+    // Logout directly
     window.location.href = '/logout';
 }
 
@@ -128,7 +128,7 @@ function startExpiryCountdown() {
 
 // User Settings Modal Functions
 function openUserSettingsModal() {
-    // Pre-populează username-ul curent
+    // Pre-populate current username
     const usernameElement = document.querySelector('.comfy-user-info');
     const currentUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : '';
     
@@ -173,7 +173,7 @@ function saveUserSettings() {
         return;
     }
 
-    // Trimite cererea către server
+    // Send request to server
     fetch('/user-settings', {
         method: 'POST',
         headers: {
@@ -190,12 +190,12 @@ function saveUserSettings() {
     .then(data => {
         if (data.success) {
             showUserSettingsMessage('✓ Settings updated successfully!', 'success');
-            // Actualizează afișajul username-ului
+            // Update username display
             const usernameElement = document.querySelector('.comfy-user-info');
             if (usernameElement) {
                 usernameElement.textContent = `Welcome, ${username}`;
             }
-            // Resetează formularul după 2 secunde
+            // Reset form after 2 seconds
             setTimeout(() => {
                 closeUserSettingsModal();
             }, 2000);
@@ -709,7 +709,7 @@ function stopChatAutoRefresh() {
 }
 
 
-// Funcție pentru a afișa notificări
+// Function to show notifications
 function showNotification(message, type = 'info') {
     const notification = document.createElement('div');
     notification.style.cssText = `
@@ -733,7 +733,7 @@ function showNotification(message, type = 'info') {
     }, 3000);
 }
 
-// Adaugă stilurile pentru animații
+// Add styles for animations
 const style = document.createElement('style');
 style.textContent = `
     @keyframes slideIn {
@@ -748,7 +748,7 @@ style.textContent = `
 document.head.appendChild(style);
 
 
-// Funcție pentru a încărca imagini din workflow
+// Function to load workflow images
 function loadWorkflowImage(filename) {
     return fetch(`/workflow-files/${encodeURIComponent(filename)}`)
         .then(response => {

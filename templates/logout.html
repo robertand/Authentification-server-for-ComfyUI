@@ -64,6 +64,12 @@
     {% raw about_modal %}
     <script src="/static/js/main.js"></script>
     <script>
+        // Check if we should redirect automatically (from Plugin Aggregator)
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('redirect')) {
+            window.location.href = urlParams.get('redirect');
+        }
+
         // "Hard" logout: clear all client-side storage
         try {
             localStorage.clear();

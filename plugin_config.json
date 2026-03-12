@@ -1,8 +1,0 @@
-{
-    "plugin_name": "PRO AI Multi-Server Aggregator",
-    "port": 8200,
-    "servers": [],
-    "admin_port": 8201,
-    "cookie_secret": "REPLACE_WITH_RANDOM_SECRET",
-    "admin_password": "admin"
-}
