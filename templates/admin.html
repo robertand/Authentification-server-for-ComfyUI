@@ -292,22 +292,18 @@
             background: #218838;
         }
 
-        /* PDF Export Styles */
-        @media print {
-            .no-pdf { display: none !important; }
-        }
-        .pdf-avoid-break {
-            page-break-inside: avoid !important;
-            break-inside: avoid !important;
-            margin-bottom: 20px;
-        }
-        .pdf-force-break {
-            page-break-before: always !important;
-            break-before: always !important;
-            height: 0;
-            margin: 0;
-            padding: 0;
-        }
+        /* PDF Export Styles (Synced with Aggregator) */
+        @media print { .no-pdf { display: none !important; } }
+        .pdf-avoid-break { page-break-inside: avoid !important; break-inside: avoid !important; margin-bottom: 20px; }
+        .pdf-page-break { page-break-before: always !important; break-before: always !important; height: 10px; }
+        .pdf-spacer { display: none; }
+        .pdf-mode .pdf-spacer { display: block !important; height: 5mm !important; }
+        .pdf-mode { background-color: #1a1a1a !important; color: #ffffff !important; width: 100% !important; }
+        .pdf-mode table { width: 100% !important; border-collapse: collapse !important; }
+        .pdf-mode th, .pdf-mode td { border: 1px solid #444 !important; padding: 8px !important; text-align: left !important; }
+        .pdf-mode canvas { max-width: 100% !important; height: auto !important; }
+        .pdf-mode .pdf-pie-container { margin-top: -30px !important; transform: translateY(-10px); }
+        .pdf-mode .nginx-section { border: 1px solid #444 !important; background: #222 !important; margin-bottom: 20px !important; }
 
         /* Spacing Control Styles */
         .spacing-control {
@@ -326,47 +322,6 @@
         }
         .spacing-control input[type="range"] {
             flex: 1;
-        }
-
-        /* PDF Mode Adjustments */
-        .pdf-mode {
-            background-color: #1a1a1a !important;
-            width: 800px !important; /* Fixed width for better scale predictability */
-            margin: 0 auto !important;
-        }
-        .pdf-mode .nginx-section {
-            display: block !important;
-            width: 100% !important;
-            page-break-inside: avoid !important;
-            break-inside: avoid !important;
-            margin-bottom: 20px !important;
-            border: 1px solid #444 !important;
-            overflow: visible !important;
-            padding: 15px !important;
-        }
-        .pdf-mode canvas {
-            max-width: 100% !important;
-            height: auto !important;
-        }
-        .pdf-mode .pdf-page-break {
-            display: block !important;
-            width: 100% !important;
-            clear: both !important;
-        }
-        .pdf-mode .status-grid {
-            display: block !important;
-        }
-        .pdf-mode .status-card {
-            margin-bottom: 10px !important;
-        }
-        .pdf-mode table {
-            width: 100% !important;
-            border-collapse: collapse !important;
-        }
-        .pdf-mode th, .pdf-mode td {
-            border: 1px solid #444 !important;
-            padding: 8px !important;
-            text-align: left !important;
         }
     </style>
 </head>
@@ -653,17 +608,17 @@
                 </div>
 
                 <div id="timeline-spacer" class="pdf-page-break" style="height: 20px;"></div>
-                <div class="pdf-force-break"></div>
-                <div class="nginx-section pdf-avoid-break" style="margin-top: 0;">
+
+                <div class="nginx-section pdf-avoid-break" style="margin-top: 20px;">
                     <h3 id="timeline-chart-title" style="margin-top:0;">Activity Timeline (Server Usage)</h3>
                     <div style="height: 400px; width: 100%;">
                         <canvas id="timelineChart"></canvas>
                     </div>
                 </div>
 
-                <div id="pie-spacer" class="pdf-page-break" style="height: 5px;"></div>
-                <div class="pdf-force-break"></div>
-                <div class="nginx-section pdf-avoid-break" style="margin-top: 0;">
+                <div id="pie-spacer" class="pdf-page-break" style="height: 10px;"></div>
+
+                <div class="nginx-section pdf-avoid-break pdf-pie-container" style="margin-top: 20px;">
                     <div style="display: flex; gap: 20px; flex-wrap: wrap;">
                         <div style="flex: 1; min-width: 45%;">
                             <h3 style="margin-top:0; text-align: center;">Job Distribution per Server</h3>
@@ -2289,43 +2244,22 @@
             const viewType = document.getElementById('analytics-view-type').value;
             const dateStr = document.getElementById('analytics-date-display').textContent;
 
-            // Activate PDF mode for styling
             element.classList.add('pdf-mode');
 
-            // Optimization for canvas rendering: trigger a resize to ensure charts fit fixed width
-            window.dispatchEvent(new Event('resize'));
-
             const opt = {
-                margin:       [10, 5, 10, 5], // tighter margins for PDF
-                filename:     `Usage_Report_${viewType}_${dateStr.replace(/ /g, '_')}.pdf`,
-                image:        { type: 'jpeg', quality: 0.98 },
-                html2canvas:  {
-                    scale: 2,
-                    backgroundColor: '#1a1a1a',
-                    logging: false,
-                    useCORS: true,
-                    allowTaint: true
-                },
-                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
-                pagebreak:    { mode: ['css', 'legacy'], avoid: '.pdf-avoid-break' }
+                margin: [15, 10, 15, 10],
+                filename: `Usage_Report_${viewType}_${dateStr.replace(/ /g, '_')}.pdf`,
+                html2canvas: { scale: 2, backgroundColor: '#1a1a1a', useCORS: true },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                pagebreak: { mode: ['css', 'legacy'] }
             };
 
-            // Temporary adjust text color for better contrast in PDF
-            const originalColor = element.style.color;
-            element.style.color = '#ffffff';
-
-            // Delay to allow layout recalculation
-            setTimeout(() => {
-                html2pdf().set(opt).from(element).save().then(() => {
-                    element.style.color = originalColor;
-                    element.classList.remove('pdf-mode');
-                    window.dispatchEvent(new Event('resize'));
-                }).catch(err => {
-                    console.error('PDF Export Error:', err);
-                    element.classList.remove('pdf-mode');
-                    window.dispatchEvent(new Event('resize'));
-                });
-            }, 500);
+            html2pdf().set(opt).from(element).save().then(() => {
+                element.classList.remove('pdf-mode');
+            }).catch(err => {
+                console.error('PDF Export Error:', err);
+                element.classList.remove('pdf-mode');
+            });
         }
 
         // Load initial data
