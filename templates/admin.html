@@ -297,38 +297,61 @@
             .no-pdf { display: none !important; }
         }
         .pdf-avoid-break {
-            page-break-inside: avoid;
-            break-inside: avoid;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
             margin-bottom: 20px;
         }
-        .pdf-page-break {
+        .pdf-force-break {
             page-break-before: always !important;
             break-before: always !important;
+            height: 0;
+            margin: 0;
+            padding: 0;
         }
-        .pdf-spacer {
-            display: none;
+
+        /* Spacing Control Styles */
+        .spacing-control {
+            background: #333;
+            padding: 10px 15px;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+            border: 1px solid #444;
         }
-        .pdf-mode .pdf-spacer {
-            display: block !important;
-            height: 5mm !important;
+        .spacing-control label {
+            margin-bottom: 0;
+            white-space: nowrap;
+        }
+        .spacing-control input[type="range"] {
+            flex: 1;
         }
 
         /* PDF Mode Adjustments */
         .pdf-mode {
             background-color: #1a1a1a !important;
+            width: 800px !important; /* Fixed width for better scale predictability */
+            margin: 0 auto !important;
         }
         .pdf-mode .nginx-section {
             display: block !important;
             width: 100% !important;
             page-break-inside: avoid !important;
             break-inside: avoid !important;
-            margin-bottom: 30px !important;
+            margin-bottom: 20px !important;
             border: 1px solid #444 !important;
             overflow: visible !important;
+            padding: 15px !important;
         }
         .pdf-mode canvas {
             max-width: 100% !important;
             height: auto !important;
+        }
+        .pdf-mode .pdf-page-break {
+            display: block !important;
+            width: 100% !important;
+            clear: both !important;
         }
         .pdf-mode .status-grid {
             display: block !important;
@@ -613,6 +636,11 @@
                     <button class="security" onclick="exportToPDF()" style="margin-left: auto;">Export to PDF</button>
                 </div>
 
+                <div class="spacing-control no-pdf">
+                    <label for="pdf-spacing-slider">Vertical Spacing (for PDF): <span id="spacing-value">20</span>px</label>
+                    <input type="range" id="pdf-spacing-slider" min="0" max="800" value="20" oninput="updatePdfSpacing(this.value)">
+                </div>
+
                 <div class="nginx-section pdf-avoid-break" style="display: flex; gap: 20px; flex-wrap: wrap;">
                     <div style="flex: 1; min-width: 45%; background: #222; padding: 15px; border-radius: 10px;">
                         <h3 style="margin-top:0;">Number of Executed Jobs</h3>
@@ -624,7 +652,8 @@
                     </div>
                 </div>
 
-                <div class="pdf-page-break" style="height: 15px;"></div>
+                <div id="timeline-spacer" class="pdf-page-break" style="height: 20px;"></div>
+                <div class="pdf-force-break"></div>
                 <div class="nginx-section pdf-avoid-break" style="margin-top: 0;">
                     <h3 id="timeline-chart-title" style="margin-top:0;">Activity Timeline (Server Usage)</h3>
                     <div style="height: 400px; width: 100%;">
@@ -632,8 +661,8 @@
                     </div>
                 </div>
 
-                <div class="pdf-page-break" style="height: 5px;"></div>
-
+                <div id="pie-spacer" class="pdf-page-break" style="height: 5px;"></div>
+                <div class="pdf-force-break"></div>
                 <div class="nginx-section pdf-avoid-break" style="margin-top: 0;">
                     <div style="display: flex; gap: 20px; flex-wrap: wrap;">
                         <div style="flex: 1; min-width: 45%;">
@@ -2247,6 +2276,14 @@
             });
         }
 
+        function updatePdfSpacing(val) {
+            document.getElementById('spacing-value').textContent = val;
+            const timelineSpacer = document.getElementById('timeline-spacer');
+            const pieSpacer = document.getElementById('pie-spacer');
+            if (timelineSpacer) timelineSpacer.style.height = val + 'px';
+            if (pieSpacer) pieSpacer.style.height = (val / 2) + 'px'; // Scaling second spacer
+        }
+
         function exportToPDF() {
             const element = document.getElementById('pdf-export-container');
             const viewType = document.getElementById('analytics-view-type').value;
@@ -2255,8 +2292,11 @@
             // Activate PDF mode for styling
             element.classList.add('pdf-mode');
 
+            // Optimization for canvas rendering: trigger a resize to ensure charts fit fixed width
+            window.dispatchEvent(new Event('resize'));
+
             const opt = {
-                margin:       [15, 10, 15, 10], // top, left, bottom, right
+                margin:       [10, 5, 10, 5], // tighter margins for PDF
                 filename:     `Usage_Report_${viewType}_${dateStr.replace(/ /g, '_')}.pdf`,
                 image:        { type: 'jpeg', quality: 0.98 },
                 html2canvas:  {
@@ -2264,23 +2304,28 @@
                     backgroundColor: '#1a1a1a',
                     logging: false,
                     useCORS: true,
-                    letterRendering: true
+                    allowTaint: true
                 },
                 jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
-                pagebreak:    { mode: ['css', 'legacy'] }
+                pagebreak:    { mode: ['css', 'legacy'], avoid: '.pdf-avoid-break' }
             };
 
             // Temporary adjust text color for better contrast in PDF
             const originalColor = element.style.color;
             element.style.color = '#ffffff';
 
-            html2pdf().set(opt).from(element).save().then(() => {
-                element.style.color = originalColor;
-                element.classList.remove('pdf-mode');
-            }).catch(err => {
-                console.error('PDF Export Error:', err);
-                element.classList.remove('pdf-mode');
-            });
+            // Delay to allow layout recalculation
+            setTimeout(() => {
+                html2pdf().set(opt).from(element).save().then(() => {
+                    element.style.color = originalColor;
+                    element.classList.remove('pdf-mode');
+                    window.dispatchEvent(new Event('resize'));
+                }).catch(err => {
+                    console.error('PDF Export Error:', err);
+                    element.classList.remove('pdf-mode');
+                    window.dispatchEvent(new Event('resize'));
+                });
+            }, 500);
         }
 
         // Load initial data

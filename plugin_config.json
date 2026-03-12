@@ -6,6 +6,10 @@
         {
             "url": "http://127.0.0.1:7861",
             "display_name": "Local Auth Server"
+        },
+        {
+            "url": "http://127.0.0.1:7861",
+            "display_name": "Local Auth"
         }
     ],
     "cookie_secret": "S3cret-C0ok1e-Key-2025",
