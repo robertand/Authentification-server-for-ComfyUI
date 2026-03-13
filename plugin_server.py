@@ -249,7 +249,7 @@ class AggregatorLoginHandler(AggregatorBaseHandler):
                     "raw_session_id": raw_session_id or signed_session_id,
                     "created": time.time()
                 }
-                self.set_secure_cookie("agg_session_id", agg_sid, expires_days=1, path="/")
+                self.set_secure_cookie("agg_session_id", agg_sid, expires_days=1, path="/", httponly=True, samesite="Lax")
                 log.info(f"User {username} logged in via Aggregator for server {server_url}")
                 # Redirect directly to comfy after successful login
                 self.redirect("/comfy/")
@@ -314,8 +314,11 @@ class AggregatorLogoutHandler(AggregatorBaseHandler):
 
 class AggregatorProxyHandler(AggregatorBaseHandler):
     def set_default_headers(self):
-        self.set_header("Access-Control-Allow-Origin", "*")
-        self.set_header("Access-Control-Allow-Headers", "x-requested-with, content-type, authorization, x-forwarded-for, x-real-ip, x-forwarded-proto, x-forwarded-host, cookie")
+        origin = self.request.headers.get("Origin")
+        if origin:
+            self.set_header("Access-Control-Allow-Origin", origin)
+
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with, content-type, authorization, x-forwarded-for, x-real-ip, x-forwarded-proto, x-forwarded-host, cookie, x-xsrftoken")
         self.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD")
         self.set_header("Access-Control-Allow-Credentials", "true")
 
@@ -488,7 +491,10 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
                         v = v.replace(backend_base, f"{self.request.protocol}://{self.request.host}/comfy")
                     self.set_header(h, v)
 
-            if "Access-Control-Allow-Origin" not in self._headers: self.set_header("Access-Control-Allow-Origin", "*")
+            if "Access-Control-Allow-Origin" not in self._headers:
+                origin = self.request.headers.get("Origin")
+                if origin:
+                    self.set_header("Access-Control-Allow-Origin", origin)
             if "Access-Control-Allow-Credentials" not in self._headers: self.set_header("Access-Control-Allow-Credentials", "true")
 
             content_type = response.headers.get('Content-Type', '').lower()
@@ -666,7 +672,7 @@ class AdminLoginHandler(AdminBaseHandler):
 
         if hashed and bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8')):
             RateLimiter.clear_attempts(client_ip)
-            self.set_secure_cookie("agg_admin_session", "logged_in", expires_days=1, path="/")
+            self.set_secure_cookie("agg_admin_session", "logged_in", expires_days=1, path="/", httponly=True, samesite="Lax")
             self.redirect("/admin")
         else:
             RateLimiter.record_failed_attempt(client_ip)
@@ -808,6 +814,7 @@ def make_aggregator_app():
     serve_traceback=False,
     cookie_secret=config["cookie_secret"],
     login_url="/login",
+    xsrf_cookies=True,
     websocket_ping_interval=20,
     websocket_ping_timeout=30,
     websocket_max_message_size=500 * 1024 * 1024
@@ -825,7 +832,8 @@ def make_admin_app():
     ],
     template_path=os.path.join(os.path.dirname(__file__), "templates"),
     cookie_secret=config["cookie_secret"],
-    login_url="/login"
+    login_url="/login",
+    xsrf_cookies=True
     )
 
 if __name__ == "__main__":

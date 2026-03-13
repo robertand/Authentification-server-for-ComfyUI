@@ -8,6 +8,7 @@
         <div class="login-subtitle">CONNECTING TO {{ username }}</div>
 
         <form method="post">
+            {% raw xsrf_form_html() %}
             <input type="hidden" name="server_url" value="{{ server_url }}">
             <input type="hidden" name="username" value="{{ username }}">
             <div style="margin-bottom: 15px; font-weight: bold;">User: {{ username }}</div>

@@ -762,6 +762,30 @@ function loadWorkflowImage(filename) {
         });
 }
 
+// Helper to get cookie value
+function getCookie(name) {
+    var r = document.cookie.match("\\b" + name + "=([^;]*)\\b");
+    return r ? r[1] : undefined;
+}
+
+// Global fetch wrapper for CSRF protection
+const originalFetch = window.fetch;
+window.fetch = function(url, options = {}) {
+    if (options.method && options.method.toUpperCase() !== 'GET') {
+        options.headers = options.headers || {};
+        const xsrfToken = getCookie("_xsrf");
+        if (xsrfToken) {
+            // Tornado expects the token in the X-XSRFToken header
+            if (options.headers instanceof Headers) {
+                options.headers.set('X-XSRFToken', xsrfToken);
+            } else {
+                options.headers['X-XSRFToken'] = xsrfToken;
+            }
+        }
+    }
+    return originalFetch(url, options);
+};
+
 // Handle Enter key in chat input
 document.addEventListener('DOMContentLoaded', function() {
     const chatInput = document.getElementById('chatInput');

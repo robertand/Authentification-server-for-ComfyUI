@@ -806,7 +806,7 @@ class LoginHandler(BaseHandler):
                 
             if can_user_login(user):
                 session_id = create_session(user)
-                self.set_secure_cookie("session_id", session_id, expires_days=1, path="/")
+                self.set_secure_cookie("session_id", session_id, expires_days=1, path="/", httponly=True, samesite="Lax")
                 
                 # Dacă cererea vine de la un aggregator, trimitem și ID-ul brut pentru management la distanță
                 if self.request.headers.get("X-Plugin-Name"):
@@ -973,13 +973,13 @@ class WorkflowLoadHandler(BaseHandler):
         session_data = get_session(session_id)
         username = session_data["user"]
         
-        if '..' in filename or '/' in filename or '\\' in filename:
+        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username)), "")
+        filepath = os.path.abspath(os.path.join(user_dir, filename))
+
+        if not filepath.startswith(user_dir):
             self.set_status(400)
-            self.write({"success": False, "error": "Invalid filename"})
+            self.write({"success": False, "error": "Invalid filename or path traversal detected"})
             return
-        
-        user_dir = get_user_workflow_dir(username)
-        filepath = os.path.join(user_dir, filename)
         
         if not os.path.exists(filepath) or not os.path.isfile(filepath):
             self.set_status(404)
@@ -1024,13 +1024,13 @@ class WorkflowSaveHandler(BaseHandler):
         if not filename.endswith('.json'):
             filename += '.json'
         
-        if '..' in filename or '/' in filename or '\\' in filename:
+        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username)), "")
+        filepath = os.path.abspath(os.path.join(user_dir, filename))
+
+        if not filepath.startswith(user_dir):
             self.set_status(400)
-            self.write({"success": False, "error": "Invalid filename"})
+            self.write({"success": False, "error": "Invalid filename or path traversal detected"})
             return
-        
-        user_dir = get_user_workflow_dir(username)
-        filepath = os.path.join(user_dir, filename)
         
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
@@ -1054,13 +1054,13 @@ class WorkflowDeleteHandler(BaseHandler):
         session_data = get_session(session_id)
         username = session_data["user"]
         
-        if '..' in filename or '/' in filename or '\\' in filename:
+        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username)), "")
+        filepath = os.path.abspath(os.path.join(user_dir, filename))
+
+        if not filepath.startswith(user_dir):
             self.set_status(400)
-            self.write({"success": False, "error": "Invalid filename"})
+            self.write({"success": False, "error": "Invalid filename or path traversal detected"})
             return
-        
-        user_dir = get_user_workflow_dir(username)
-        filepath = os.path.join(user_dir, filename)
         
         if not os.path.exists(filepath) or not os.path.isfile(filepath):
             self.set_status(404)
@@ -1568,7 +1568,7 @@ class AdminLoginHandler(BaseHandler):
         if check_password(ADMIN_CONFIG["password"], password):
             session_id = create_admin_session()
             # Set path="/" to ensure it's sent for all /admin/api/ requests
-            self.set_secure_cookie("admin_session_id", session_id, expires_days=1, path="/")
+            self.set_secure_cookie("admin_session_id", session_id, expires_days=1, path="/", httponly=True, samesite="Lax")
             
             RateLimiter.clear_attempts(client_ip)
             
@@ -1616,8 +1616,11 @@ class AdminUsageStatsHandler(BaseHandler):
         if admin_pass_header:
             expected_pass = ADMIN_CONFIG["password"]
             if isinstance(expected_pass, str) and expected_pass.startswith("$2b$"):
-                if bcrypt.checkpw(admin_pass_header.encode(), expected_pass.encode()):
-                    authorized = True
+                try:
+                    if bcrypt.checkpw(admin_pass_header.encode(), expected_pass.encode()):
+                        authorized = True
+                except:
+                    pass
             elif admin_pass_header == expected_pass:
                 authorized = True
 
@@ -1991,11 +1994,13 @@ class AdminTerminateSessionHandler(tornado.web.RequestHandler):
             expected_pass = ADMIN_CONFIG["password"]
             authorized = False
             if isinstance(expected_pass, str) and expected_pass.startswith("$2b$"):
-                if admin_pass and bcrypt.checkpw(admin_pass.encode(), expected_pass.encode()):
-                    authorized = True
-            else:
-                if admin_pass == expected_pass:
-                    authorized = True
+                try:
+                    if admin_pass and bcrypt.checkpw(admin_pass.encode(), expected_pass.encode()):
+                        authorized = True
+                except:
+                    pass
+            elif admin_pass == expected_pass:
+                authorized = True
 
             if not authorized:
                 self.set_status(403)
@@ -2428,8 +2433,11 @@ class AdminBlockedUsersHandler(BaseHandler):
 # === PROXY HANDLER COMPLET CU RESCRIERE URL ===
 class MultiInstanceProxyHandler(BaseHandler):
     def set_default_headers(self):
-        self.set_header("Access-Control-Allow-Origin", "*")
-        self.set_header("Access-Control-Allow-Headers", "x-requested-with, content-type, authorization, x-forwarded-for, x-real-ip, x-forwarded-proto, x-forwarded-host, cookie")
+        origin = self.request.headers.get("Origin")
+        if origin:
+            self.set_header("Access-Control-Allow-Origin", origin)
+
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with, content-type, authorization, x-forwarded-for, x-real-ip, x-forwarded-proto, x-forwarded-host, cookie, x-xsrftoken")
         self.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD")
         self.set_header("Access-Control-Allow-Credentials", "true")
     
@@ -2775,7 +2783,9 @@ class MultiInstanceProxyHandler(BaseHandler):
             
             # Asigură headere CORS minime dacă lipsesc
             if "Access-Control-Allow-Origin" not in self._headers:
-                self.set_header("Access-Control-Allow-Origin", "*")
+                origin = self.request.headers.get("Origin")
+                if origin:
+                    self.set_header("Access-Control-Allow-Origin", origin)
             if "Access-Control-Allow-Credentials" not in self._headers:
                 self.set_header("Access-Control-Allow-Credentials", "true")
             
@@ -3412,6 +3422,7 @@ def make_auth_app():
     serve_traceback=False,
     cookie_secret=config["cookie_secret"],
     login_url="/login",
+    xsrf_cookies=True,
     websocket_ping_interval=20,
     websocket_ping_timeout=30,
     websocket_max_message_size=500 * 1024 * 1024
@@ -3454,7 +3465,8 @@ def make_admin_app():
     autoreload=False,
     serve_traceback=False,
     cookie_secret=config["cookie_secret"],
-    login_url="/admin/login"
+    login_url="/admin/login",
+    xsrf_cookies=True
     )
 
 if __name__ == "__main__":
