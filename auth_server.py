@@ -32,13 +32,13 @@ from concurrent.futures import ThreadPoolExecutor
 ABOUT_DRAWER_HTML = """
 <div id="aboutDrawer" class="about-drawer">
     <div class="about-drawer-content">
-        <h2>PRO AI Server v0.4.5</h2>
+        <h2>ADA Server v1.2.3h2>
         <div class="about-glass-card">
             <p>Advanced management and authentication system for multiple ComfyUI instances.</p>
             <p>All systems are operational. High-performance GPU nodes are active.</p>
         </div>
         <div style="margin-top: 30px; text-align: center; opacity: 0.7; font-size: 12px;">
-            <p>Version 0.4.5 - Created for PRO AI teams</p>
+            <p>Version 1.2.3 - Created for ADA AI teams</p>
         </div>
     </div>
 </div>
@@ -2974,7 +2974,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                     
                     const serverTitle = document.createElement('div');
                     serverTitle.className = 'server-title';
-                    serverTitle.textContent = 'PRO AI Server';
+                    serverTitle.textContent = 'ADA Server';
                     
                     const buttonsDiv = document.createElement('div');
                     buttonsDiv.className = 'comfy-auth-buttons';
