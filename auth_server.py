@@ -704,11 +704,11 @@ def get_admin_session(session_id):
     return admin_sessions.get(session_id)
 
 def is_authenticated(handler):
-    session_id = handler.get_secure_cookie("session_id")
+    session_id = handler.current_user
     if not session_id:
         return False
     
-    session_data = get_session(session_id.decode())
+    session_data = get_session(session_id)
     return session_data and session_data["authenticated"]
 
 def is_admin_authenticated(handler):
@@ -719,11 +719,37 @@ def is_admin_authenticated(handler):
     if not session_id:
         return False
     
-    session_data = get_admin_session(session_id.decode())
+    session_data = get_admin_session(session_id)
     return session_data and session_data["authenticated"]
 
 # === HANDLERE PENTRU INTERFAȚA PRINCIPALĂ ===
 class BaseHandler(tornado.web.RequestHandler):
+    def get_current_user(self):
+        # Try getting session from secure cookie
+        session_id = self.get_secure_cookie("session_id")
+
+        # Fallback to session_id in query parameters (for Plugin Aggregator WebSockets and API calls)
+        if not session_id:
+            try:
+                qs_session = self.get_argument("session_id", None)
+                if qs_session:
+                    # We must verify the signed session_id from query string
+                    decoded = tornado.web.decode_signed_value(
+                        self.application.settings["cookie_secret"],
+                        "session_id",
+                        qs_session
+                    )
+                    if decoded:
+                        session_id = decoded
+            except:
+                pass
+
+        if not session_id:
+            return None
+
+        # Ensure session_id is a string
+        return session_id.decode() if isinstance(session_id, bytes) else session_id
+
     def render_html(self, template, **kwargs):
         result = template
         for key, value in kwargs.items():
@@ -731,6 +757,13 @@ class BaseHandler(tornado.web.RequestHandler):
             result = result.replace(placeholder, str(value))
         return result
     
+    def check_xsrf_cookie(self):
+        # Permit requests from trusted inter-server agents to bypass CSRF
+        trusted_headers = ["X-Plugin-Name", "X-Admin-Password", "X-Session-ID", "X-User-ID"]
+        if any(self.request.headers.get(h) for h in trusted_headers):
+            return
+        super().check_xsrf_cookie()
+
     def prepare(self):
         set_security_headers(self)
         # Prevent caching of dynamic authenticated content
@@ -877,7 +910,7 @@ class UserSettingsHandler(BaseHandler):
             self.write({"success": False, "error": "Not authenticated"})
             return
         
-        session_id = self.get_secure_cookie("session_id").decode()
+        session_id = self.current_user
         session_data = get_session(session_id)
         current_username = session_data["user"]
         
@@ -923,11 +956,11 @@ class UserSettingsHandler(BaseHandler):
 
 class LogoutHandler(BaseHandler):
     def get(self):
-        session_id = self.get_secure_cookie("session_id")
+        session_id = self.current_user
         username = "Unknown"
         
         if session_id:
-            session_id = session_id.decode()
+            session_id = session_id
             if session_id in sessions:
                 username = sessions[session_id].get("user", "Unknown")
                 if username in USERS:
@@ -950,7 +983,7 @@ class WorkflowListHandler(BaseHandler):
             self.write({"success": False, "error": "Not authenticated"})
             return
         
-        session_id = self.get_secure_cookie("session_id").decode()
+        session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
         
@@ -969,7 +1002,7 @@ class WorkflowLoadHandler(BaseHandler):
             self.write({"success": False, "error": "Not authenticated"})
             return
         
-        session_id = self.get_secure_cookie("session_id").decode()
+        session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
         
@@ -1008,7 +1041,7 @@ class WorkflowSaveHandler(BaseHandler):
             self.write({"success": False, "error": "Not authenticated"})
             return
         
-        session_id = self.get_secure_cookie("session_id").decode()
+        session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
         
@@ -1050,7 +1083,7 @@ class WorkflowDeleteHandler(BaseHandler):
             self.write({"success": False, "error": "Not authenticated"})
             return
         
-        session_id = self.get_secure_cookie("session_id").decode()
+        session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
         
@@ -1084,7 +1117,7 @@ class ChatMessagesHandler(BaseHandler):
             self.write({"success": False, "error": "Not authenticated"})
             return
         
-        session_id = self.get_secure_cookie("session_id").decode()
+        session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
         
@@ -1107,7 +1140,7 @@ class SendMessageHandler(BaseHandler):
             self.write({"success": False, "error": "Not authenticated"})
             return
         
-        session_id = self.get_secure_cookie("session_id").decode()
+        session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
         
@@ -1173,7 +1206,7 @@ class UploadChatFileHandler(BaseHandler):
             self.write({"success": False, "error": "Not authenticated"})
             return
         
-        session_id = self.get_secure_cookie("session_id").decode()
+        session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
         
@@ -1276,7 +1309,7 @@ class MarkMessagesReadHandler(BaseHandler):
             self.write({"success": False, "error": "Not authenticated"})
             return
         
-        session_id = self.get_secure_cookie("session_id").decode()
+        session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
         
@@ -1294,7 +1327,7 @@ class UnreadMessagesCountHandler(BaseHandler):
             self.write({"success": False, "error": "Not authenticated"})
             return
         
-        session_id = self.get_secure_cookie("session_id").decode()
+        session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
         
@@ -1320,7 +1353,33 @@ class ChatUsersListHandler(BaseHandler):
 
         self.write({"success": True, "users": user_list})
 
-class ChatWebSocketHandler(tornado.websocket.WebSocketHandler):
+class WebSocketBaseHandler(tornado.websocket.WebSocketHandler):
+    def get_current_user(self):
+        # Try getting session from secure cookie
+        session_id = self.get_secure_cookie("session_id")
+
+        # Fallback to session_id in query parameters
+        if not session_id:
+            try:
+                qs_session = self.get_argument("session_id", None)
+                if qs_session:
+                    decoded = tornado.web.decode_signed_value(
+                        self.application.settings["cookie_secret"],
+                        "session_id",
+                        qs_session
+                    )
+                    if decoded:
+                        session_id = decoded
+            except:
+                pass
+
+        if not session_id:
+            return None
+
+        # Ensure session_id is a string
+        return session_id.decode() if isinstance(session_id, bytes) else session_id
+
+class ChatWebSocketHandler(WebSocketBaseHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.username = None
@@ -1333,7 +1392,7 @@ class ChatWebSocketHandler(tornado.websocket.WebSocketHandler):
             self.close()
             return
         
-        session_id = self.get_secure_cookie("session_id").decode()
+        session_id = self.current_user
         session_data = get_session(session_id)
         self.username = session_data["user"]
         
@@ -1451,13 +1510,13 @@ class ChatWebSocketHandler(tornado.websocket.WebSocketHandler):
 # === SESSION CHECK HANDLER ===
 class SessionCheckHandler(BaseHandler):
     def get(self):
-        session_id = self.get_secure_cookie("session_id")
+        session_id = self.current_user
         
         if not session_id:
             self.write({"status": "not_authenticated"})
             return
         
-        session_id = session_id.decode()
+        session_id = session_id
         
         if session_id in FORCED_LOGOUT_SESSIONS:
             self.write({"status": "forced_logout"})
@@ -1482,7 +1541,7 @@ class SessionCheckHandler(BaseHandler):
                 elif time_remaining <= 0:
                     if username in USERS:
                         USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
-                    del sessions[session_id.decode()]
+                    del sessions[session_id]
                     self.clear_cookie("session_id", path="/")
                     self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
                     return
@@ -1497,13 +1556,13 @@ class SessionCheckHandler(BaseHandler):
 
 class SessionRefreshHandler(BaseHandler):
     def post(self):
-        session_id = self.get_secure_cookie("session_id")
+        session_id = self.current_user
         
         if not session_id:
             self.write({"success": False, "error": "Not authenticated"})
             return
         
-        session_id = session_id.decode()
+        session_id = session_id
         session_data = get_session(session_id)
         
         if session_data:
@@ -1593,7 +1652,7 @@ class AdminLogoutHandler(BaseHandler):
     def perform_logout(self):
         session_id = self.get_secure_cookie("admin_session_id")
         if session_id:
-            session_id = session_id.decode()
+            session_id = session_id
             if session_id in admin_sessions:
                 del admin_sessions[session_id]
                 log.info("Admin logged out")
@@ -1980,7 +2039,11 @@ class AdminServerSettingsHandler(BaseHandler):
             self.set_status(500)
             self.write({"success": False, "error": str(e)})
 
-class AdminTerminateSessionHandler(tornado.web.RequestHandler):
+class AdminTerminateSessionHandler(BaseHandler):
+    def check_xsrf_cookie(self):
+        # API endpoint secured with password
+        return
+
     def set_default_headers(self):
         self.set_header("Content-Type", "application/json")
 
@@ -2463,11 +2526,11 @@ class MultiInstanceProxyHandler(BaseHandler):
         await self._proxy_request("PATCH", path or "")
     
     def get_user_comfy_url(self):
-        session_id = self.get_secure_cookie("session_id")
+        session_id = self.current_user
         if not session_id:
             return None
         
-        session_data = get_session(session_id.decode())
+        session_data = get_session(session_id)
         return session_data.get("comfy_url") if session_data else None
     
     def _get_port_from_host(self):
@@ -2563,11 +2626,11 @@ class MultiInstanceProxyHandler(BaseHandler):
         return content
     
     async def _proxy_request(self, method, path):
-        session_id = self.get_secure_cookie("session_id")
+        session_id = self.current_user
         
         # Verifică session și forced logout
         if session_id:
-            session_id_str = session_id.decode()
+            session_id_str = session_id
             if session_id_str in FORCED_LOGOUT_SESSIONS:
                 self.set_header("Content-Type", "text/html")
                 self.write("""
@@ -2586,7 +2649,7 @@ class MultiInstanceProxyHandler(BaseHandler):
         
         # Verifică expirarea sesiunii
         if session_id:
-            session_id_val = session_id.decode()
+            session_id_val = session_id
             session_data = get_session(session_id_val)
             if session_data:
                 username = session_data["user"]
@@ -2647,7 +2710,7 @@ class MultiInstanceProxyHandler(BaseHandler):
         if self.request.query:
             target_url += "?" + self.request.query
         
-        session_data = get_session(self.get_secure_cookie("session_id").decode())
+        session_data = get_session(self.current_user)
         proxy_username = session_data["user"] if session_data else "unknown"
         
         log.info(f"Proxying {method} {path} for user {proxy_username} to {target_url}")
@@ -2715,7 +2778,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             # Adăugă headere de identificare pentru uz intern
             if session_id:
                 headers['X-User-ID'] = proxy_username
-                headers['X-Session-ID'] = session_id.decode()
+                headers['X-Session-ID'] = session_id
 
             # Curăță Cookie header de cookie-urile noastre interne
             if 'Cookie' in headers:
@@ -3048,7 +3111,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             log.error(f"Error streaming response: {e}")
 
 # === WEBSOCKET PROXY COMPLET - VERSIUNE CORECTATĂ ===
-class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
+class MultiInstanceWebSocketProxy(WebSocketBaseHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.comfy_ws = None
@@ -3060,11 +3123,11 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
         return True
     
     def get_user_comfy_ws_url(self):
-        session_id = self.get_secure_cookie("session_id")
+        session_id = self.current_user
         if not session_id:
             return None
         
-        session_data = get_session(session_id.decode())
+        session_data = get_session(session_id)
         if not session_data:
             return None
         
@@ -3088,12 +3151,12 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
             self.close(code=4001, reason="Not authenticated")
             return
         
-        session_id = self.get_secure_cookie("session_id")
+        session_id = self.current_user
         if not session_id:
             self.close(code=4001, reason="Not authenticated")
             return
         
-        session_data = get_session(session_id.decode())
+        session_data = get_session(session_id)
         if not session_data:
             self.close(code=4002, reason="Session not found")
             return
@@ -3120,7 +3183,7 @@ class MultiInstanceWebSocketProxy(tornado.websocket.WebSocketHandler):
 
             # Adăugăm session_id în query string
             if session_id:
-                query_params.append(f"session_id={session_id.decode()}")
+                query_params.append(f"session_id={session_id}")
             
             # Reconstruim URL-ul cu parametrii
             new_query = "&".join(query_params) if query_params else ""
@@ -3281,8 +3344,8 @@ class StaticFileProxyHandler(BaseHandler):
             self.set_status(401)
             return
         
-        session_id = self.get_secure_cookie("session_id")
-        session_data = get_session(session_id.decode())
+        session_id = self.current_user
+        session_data = get_session(session_id)
         comfy_url = session_data.get("comfy_url") if session_data else None
         
         if not comfy_url:

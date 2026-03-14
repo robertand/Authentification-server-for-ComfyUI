@@ -439,6 +439,7 @@ class AggregatorProxyHandler(AggregatorBaseHandler):
             headers['X-Forwarded-For'] = self.get_client_ip()
             headers['X-Forwarded-Proto'] = self.request.protocol
             headers['X-Forwarded-Host'] = self.request.host
+            headers['X-Plugin-Name'] = config["plugin_name"]
             headers['X-User-ID'] = session['user']
             headers['X-Session-ID'] = session['raw_session_id']
             headers['Sec-Fetch-Site'] = 'same-origin'
@@ -575,6 +576,7 @@ class AggregatorWebSocketProxy(tornado.websocket.WebSocketHandler):
 
         ws_headers['X-Forwarded-For'] = self.request.headers.get("X-Forwarded-For", self.request.remote_ip)
         ws_headers['X-Forwarded-Host'] = self.request.host
+        ws_headers['X-Plugin-Name'] = config["plugin_name"]
 
         request = tornado.httpclient.HTTPRequest(
             url=self.target_url,
