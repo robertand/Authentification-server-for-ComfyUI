@@ -39,7 +39,7 @@ def load_config():
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 conf = json.load(f)
                 if "servers" not in conf: conf["servers"] = []
-                if "plugin_name" not in conf: conf["plugin_name"] = "ADA Aggregator"
+                if "plugin_name" not in conf: conf["plugin_name"] = "ADA Multi-Server Aggregator"
                 if "port" not in conf: conf["port"] = 8200
                 if "admin_port" not in conf: conf["admin_port"] = 8201
                 if "cookie_secret" not in conf:
@@ -53,7 +53,7 @@ def load_config():
             log.error(f"Error loading configuration: {e}")
 
     return {
-        "plugin_name": "ADA Aggregator",
+        "plugin_name": "ADA Multi-Server Aggregator",
         "port": 8200,
         "admin_port": 8201,
         "servers": [],
