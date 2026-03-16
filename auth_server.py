@@ -716,7 +716,10 @@ def is_authenticated(handler):
         return False
     
     session_data = get_session(session_id)
-    return session_data and session_data["authenticated"]
+    if not session_data or not session_data.get("authenticated"):
+        return False
+
+    return True
 
 def is_admin_authenticated(handler):
     if not ADMIN_CONFIG["enabled"]:
@@ -741,7 +744,6 @@ class BaseHandler(tornado.web.RequestHandler):
             try:
                 qs_session = self.get_argument("session_id", None)
                 if qs_session:
-                    # We must verify the signed session_id from query string
                     decoded = tornado.web.decode_signed_value(
                         self.application.settings["cookie_secret"],
                         "session_id",
@@ -751,6 +753,10 @@ class BaseHandler(tornado.web.RequestHandler):
                         session_id = decoded
             except:
                 pass
+
+        # Fallback to X-Session-ID header for trusted plugins
+        if not session_id and self.request.headers.get("X-Plugin-Name"):
+            session_id = self.request.headers.get("X-Session-ID")
 
         if not session_id:
             return None
@@ -773,6 +779,8 @@ class BaseHandler(tornado.web.RequestHandler):
         super().check_xsrf_cookie()
 
     def prepare(self):
+        # Force populate current_user
+        _ = self.current_user
         set_security_headers(self)
         # Prevent caching of dynamic authenticated content
         self.set_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -968,7 +976,6 @@ class LogoutHandler(BaseHandler):
         username = "Unknown"
         
         if session_id:
-            session_id = session_id
             if session_id in sessions:
                 username = sessions[session_id].get("user", "Unknown")
                 if username in USERS:
@@ -1381,6 +1388,10 @@ class WebSocketBaseHandler(tornado.websocket.WebSocketHandler):
             except:
                 pass
 
+        # Fallback to X-Session-ID header for trusted plugins
+        if not session_id and self.request.headers.get("X-Plugin-Name"):
+            session_id = self.request.headers.get("X-Session-ID")
+
         if not session_id:
             return None
 
@@ -1524,8 +1535,6 @@ class SessionCheckHandler(BaseHandler):
             self.write({"status": "not_authenticated"})
             return
         
-        session_id = session_id
-        
         if session_id in FORCED_LOGOUT_SESSIONS:
             self.write({"status": "forced_logout"})
             return
@@ -1570,7 +1579,6 @@ class SessionRefreshHandler(BaseHandler):
             self.write({"success": False, "error": "Not authenticated"})
             return
         
-        session_id = session_id
         session_data = get_session(session_id)
         
         if session_data:
@@ -1660,7 +1668,6 @@ class AdminLogoutHandler(BaseHandler):
     def perform_logout(self):
         session_id = self.get_secure_cookie("admin_session_id")
         if session_id:
-            session_id = session_id
             if session_id in admin_sessions:
                 del admin_sessions[session_id]
                 log.info("Admin logged out")
@@ -2791,7 +2798,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             # Curăță Cookie header de cookie-urile noastre interne
             if 'Cookie' in headers:
                 cookies = headers['Cookie'].split('; ')
-                filtered_cookies = [c for c in cookies if not c.startswith(('session_id=', 'admin_session_id='))]
+                filtered_cookies = [c for c in cookies if not c.startswith(('session_id=', 'admin_session_id=', '_xsrf='))]
                 if filtered_cookies:
                     headers['Cookie'] = '; '.join(filtered_cookies)
                 else:
@@ -3155,6 +3162,9 @@ class MultiInstanceWebSocketProxy(WebSocketBaseHandler):
         return base
     
     async def open(self):
+        # Force populate current_user
+        _ = self.current_user
+
         if not is_authenticated(self):
             self.close(code=4001, reason="Not authenticated")
             return
