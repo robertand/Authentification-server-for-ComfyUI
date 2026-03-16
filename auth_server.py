@@ -570,7 +570,9 @@ def check_comfy_ready():
 
 def check_single_instance(comfy_url, nginx_auth=None):
     global comfy_instances_ready
-    for i in range(60):
+    log.info(f"Starting continuous health monitoring for ComfyUI: {comfy_url}")
+
+    while True:
         try:
             headers = {}
             
@@ -583,16 +585,21 @@ def check_single_instance(comfy_url, nginx_auth=None):
                 encoded_auth = base64.b64encode(auth_string.encode()).decode()
                 headers['Authorization'] = f"Basic {encoded_auth}"
             
-            r = requests.get(f"{comfy_url}/", timeout=2, headers=headers)
+            r = requests.get(f"{comfy_url}/", timeout=5, headers=headers)
             if r.status_code in [200, 401]:
+                if not comfy_instances_ready.get(comfy_url):
+                    log.info(f"✓ ComfyUI instance {comfy_url} is now READY!")
                 comfy_instances_ready[comfy_url] = True
-                log.info(f"ComfyUI instance {comfy_url} is ready!")
-                return
+            else:
+                if comfy_instances_ready.get(comfy_url):
+                    log.warning(f"! ComfyUI instance {comfy_url} returned status {r.status_code}")
+                comfy_instances_ready[comfy_url] = False
         except Exception as e:
-            if i % 10 == 0:
-                log.info(f"Waiting for ComfyUI {comfy_url}... ({i}/60) - {str(e)}")
-        time.sleep(1)
-    log.error(f"ComfyUI instance {comfy_url} failed to start within timeout")
+            if comfy_instances_ready.get(comfy_url, False):
+                log.error(f"! ComfyUI instance {comfy_url} is now OFFLINE: {str(e)}")
+            comfy_instances_ready[comfy_url] = False
+
+        time.sleep(60)
 
 # === MANAGEMENT SESIUNI ===
 def cleanup_sessions():
