@@ -738,6 +738,11 @@
     {% raw about_modal %}
     <script src="/static/js/main.js"></script>
     <script>
+        // Override main.js automatic session checks that cause 404s on Admin port
+        function initSessionMonitoring() { /* Admin session is handled differently */ }
+        function checkChatButtonVisibility() { /* Not needed for Admin dashboard */ }
+        function connectChatWebSocket() { /* Admin has its own WebSocket logic */ }
+
         let selectedChatUser = null;
         let adminChatWebSocket = null;
         let adminChatAutoRefresh = null;
