@@ -771,7 +771,11 @@ function getCookie(name) {
 // Global fetch wrapper for CSRF protection
 const originalFetch = window.fetch;
 window.fetch = function(url, options = {}) {
-    if (options.method && options.method.toUpperCase() !== 'GET') {
+    // Only add XSRF token for non-GET same-origin requests
+    const isRelative = !url.toString().match(/^(https?:)?\/\//i);
+    const isSameOrigin = url.toString().startsWith(window.location.origin);
+
+    if (options.method && options.method.toUpperCase() !== 'GET' && (isRelative || isSameOrigin)) {
         options.headers = options.headers || {};
         const xsrfToken = getCookie("_xsrf");
         if (xsrfToken) {
