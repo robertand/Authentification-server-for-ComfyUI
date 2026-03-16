@@ -726,7 +726,8 @@ def is_admin_authenticated(handler):
     if not session_id:
         return False
     
-    session_data = get_admin_session(session_id)
+    session_id_str = session_id.decode() if isinstance(session_id, bytes) else session_id
+    session_data = get_admin_session(session_id_str)
     return session_data and session_data["authenticated"]
 
 # === HANDLERE PENTRU INTERFAȚA PRINCIPALĂ ===
