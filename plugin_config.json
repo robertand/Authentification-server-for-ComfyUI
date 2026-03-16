@@ -1,0 +1,18 @@
+{
+    "plugin_name": "PRO AI Aggregator",
+    "port": 8200,
+    "admin_port": 8201,
+    "servers": [
+        {
+            "url": "http://127.0.0.1:7861",
+            "display_name": "Local Auth Server"
+        },
+        {
+            "url": "http://127.0.0.1:7861",
+            "display_name": "Local Auth"
+        }
+    ],
+    "cookie_secret": "S3cret-C0ok1e-Key-2025",
+    "admin_password": "$2b$12$T8ipsBk1O.YMfx4jlw2MP.IDvU1cty3gyB4W6fu.5WFJJ1pq.MWYy",
+    "backend_admin_password": "admin123"
+}

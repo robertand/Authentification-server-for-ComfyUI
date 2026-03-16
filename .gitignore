@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Logs
+*.log
+auth_server.log
+plugin_server.log
+
+# Configuration & Data
+comfyui_auth_config.json
+plugin_config.json
+comfyui_usage_stats.json
+chat_files/
+backup/
+
+# System
+.DS_Store
+Thumbs.db
