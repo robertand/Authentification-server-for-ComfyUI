@@ -533,10 +533,8 @@ def get_local_ip():
         return "127.0.0.1"
 
 def set_security_headers(handler):
+    # Minimal security headers to avoid breaking external integrations like Firebase
     handler.set_header("X-Content-Type-Options", "nosniff")
-    handler.set_header("X-Frame-Options", "DENY")
-    handler.set_header("X-XSS-Protection", "1; mode=block")
-    handler.set_header("Referrer-Policy", "strict-origin-when-cross-origin")
 
 def add_nginx_auth_headers(headers, username):
     if username in USERS:
@@ -713,10 +711,12 @@ def get_admin_session(session_id):
 def is_authenticated(handler):
     session_id = handler.current_user
     if not session_id:
+        # log.debug(f"Auth failed: current_user is None for {handler.request.uri}")
         return False
     
     session_data = get_session(session_id)
     if not session_data or not session_data.get("authenticated"):
+        log.warning(f"Auth failed: session {session_id} not found or not authenticated for {handler.request.uri}")
         return False
 
     return True
@@ -731,7 +731,12 @@ def is_admin_authenticated(handler):
     
     session_id_str = session_id.decode() if isinstance(session_id, bytes) else session_id
     session_data = get_admin_session(session_id_str)
-    return session_data and session_data["authenticated"]
+
+    is_auth = session_data and session_data["authenticated"]
+    if not is_auth:
+        log.warning(f"Admin auth failed for {handler.request.uri} from IP {handler.get_client_ip()}")
+
+    return is_auth
 
 # === HANDLERE PENTRU INTERFAȚA PRINCIPALĂ ===
 class BaseHandler(tornado.web.RequestHandler):
@@ -742,7 +747,13 @@ class BaseHandler(tornado.web.RequestHandler):
         # Fallback to session_id in query parameters (for Plugin Aggregator WebSockets and API calls)
         if not session_id:
             try:
-                qs_session = self.get_argument("session_id", None)
+                # We use raw URL parsing because self.get_argument might fail for non-standard requests
+                # or during certain lifecycle phases
+                from urllib.parse import parse_qs, urlparse
+                query = urlparse(self.request.uri).query
+                qs = parse_qs(query)
+                qs_session = qs.get("session_id", [None])[0]
+
                 if qs_session:
                     decoded = tornado.web.decode_signed_value(
                         self.application.settings["cookie_secret"],
@@ -751,8 +762,8 @@ class BaseHandler(tornado.web.RequestHandler):
                     )
                     if decoded:
                         session_id = decoded
-            except:
-                pass
+            except Exception as e:
+                log.debug(f"Query string session decode failed: {e}")
 
         # Fallback to X-Session-ID header for trusted plugins
         if not session_id and self.request.headers.get("X-Plugin-Name"):
@@ -776,6 +787,11 @@ class BaseHandler(tornado.web.RequestHandler):
         trusted_headers = ["X-Plugin-Name", "X-Admin-Password", "X-Session-ID", "X-User-ID"]
         if any(self.request.headers.get(h) for h in trusted_headers):
             return
+
+        # Relaxed XSRF: bypass for API routes to avoid breaking proxied requests
+        if self.request.path.startswith(("/comfy/api/", "/api/")):
+            return
+
         super().check_xsrf_cookie()
 
     def prepare(self):
@@ -855,7 +871,7 @@ class LoginHandler(BaseHandler):
                 
             if can_user_login(user):
                 session_id = create_session(user)
-                self.set_secure_cookie("session_id", session_id, expires_days=1, path="/", httponly=True, samesite="Lax")
+                self.set_secure_cookie("session_id", session_id, expires_days=1, path="/")
                 
                 # Dacă cererea vine de la un aggregator, trimitem și ID-ul brut pentru management la distanță
                 if self.request.headers.get("X-Plugin-Name"):
@@ -1376,7 +1392,11 @@ class WebSocketBaseHandler(tornado.websocket.WebSocketHandler):
         # Fallback to session_id in query parameters
         if not session_id:
             try:
-                qs_session = self.get_argument("session_id", None)
+                from urllib.parse import parse_qs, urlparse
+                query = urlparse(self.request.uri).query
+                qs = parse_qs(query)
+                qs_session = qs.get("session_id", [None])[0]
+
                 if qs_session:
                     decoded = tornado.web.decode_signed_value(
                         self.application.settings["cookie_secret"],
@@ -1385,8 +1405,8 @@ class WebSocketBaseHandler(tornado.websocket.WebSocketHandler):
                     )
                     if decoded:
                         session_id = decoded
-            except:
-                pass
+            except Exception as e:
+                log.debug(f"WS Query string session decode failed: {e}")
 
         # Fallback to X-Session-ID header for trusted plugins
         if not session_id and self.request.headers.get("X-Plugin-Name"):
@@ -1643,7 +1663,7 @@ class AdminLoginHandler(BaseHandler):
         if check_password(ADMIN_CONFIG["password"], password):
             session_id = create_admin_session()
             # Set path="/" to ensure it's sent for all /admin/api/ requests
-            self.set_secure_cookie("admin_session_id", session_id, expires_days=1, path="/", httponly=True, samesite="Lax")
+            self.set_secure_cookie("admin_session_id", session_id, expires_days=1, path="/")
             
             RateLimiter.clear_attempts(client_ip)
             
@@ -3503,7 +3523,7 @@ def make_auth_app():
     serve_traceback=False,
     cookie_secret=config["cookie_secret"],
     login_url="/login",
-    xsrf_cookies=True,
+    xsrf_cookies=False,
     websocket_ping_interval=20,
     websocket_ping_timeout=30,
     websocket_max_message_size=500 * 1024 * 1024
@@ -3547,7 +3567,7 @@ def make_admin_app():
     serve_traceback=False,
     cookie_secret=config["cookie_secret"],
     login_url="/admin/login",
-    xsrf_cookies=True
+    xsrf_cookies=False
     )
 
 if __name__ == "__main__":

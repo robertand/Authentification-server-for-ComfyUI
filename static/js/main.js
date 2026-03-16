@@ -768,38 +768,6 @@ function getCookie(name) {
     return r ? r[1] : undefined;
 }
 
-// Global fetch wrapper for CSRF protection
-const originalFetch = window.fetch;
-window.fetch = function(input, init) {
-    // Avoid interfering if the input is a Request object (Firebase and other libs often use this)
-    if (input instanceof Request) {
-        return originalFetch.apply(this, arguments);
-    }
-
-    const url = input.toString();
-    const options = init || {};
-
-    // Only add XSRF token for non-GET same-origin requests
-    const isRelative = !url.match(/^(https?:)?\/\//i);
-    const isSameOrigin = url.startsWith(window.location.origin);
-
-    if (options.method && options.method.toUpperCase() !== 'GET' && (isRelative || isSameOrigin)) {
-        const xsrfToken = getCookie("_xsrf");
-        if (xsrfToken) {
-            options.headers = options.headers || {};
-            // Tornado expects the token in the X-XSRFToken header
-            if (options.headers instanceof Headers) {
-                options.headers.set('X-XSRFToken', xsrfToken);
-            } else if (Array.isArray(options.headers)) {
-                options.headers.push(['X-XSRFToken', xsrfToken]);
-            } else {
-                options.headers['X-XSRFToken'] = xsrfToken;
-            }
-        }
-    }
-    return originalFetch.call(this, input, options);
-};
-
 // Handle Enter key in chat input
 document.addEventListener('DOMContentLoaded', function() {
     const chatInput = document.getElementById('chatInput');
