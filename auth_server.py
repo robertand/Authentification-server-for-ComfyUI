@@ -673,13 +673,22 @@ def can_user_login(username):
     
     return user_data["instances"] < user_data["max_instances"]
 
+def get_next_session_index(username):
+    active_indices = [s.get("session_index", 0) for s in sessions.values() if s.get("user") == username]
+    index = 1
+    while index in active_indices:
+        index += 1
+    return index
+
 def create_session(username):
     session_id = str(uuid.uuid4())
+    index = get_next_session_index(username)
     sessions[session_id] = {
         "authenticated": True,
         "user": username,
         "comfy_url": USERS[username]["comfy_url"],
-        "created": time.time()
+        "created": time.time(),
+        "session_index": index
     }
     USERS[username]["instances"] += 1
     record_session_start(username, session_id)
@@ -880,6 +889,20 @@ class LoginHandler(BaseHandler):
                 RateLimiter.clear_attempts(client_ip)
                 
                 log.info(f"User {user} logged in successfully from IP {client_ip}")
+
+                # Notify existing sessions
+                user_sessions = [sid for sid, sdata in sessions.items() if sdata["user"] == user and sid != session_id]
+                if user_sessions:
+                    for sid in user_sessions:
+                        if sid in USER_CHAT_WEBSOCKETS:
+                            for ws in USER_CHAT_WEBSOCKETS[sid]:
+                                try:
+                                    ws.write_message(json.dumps({
+                                        "type": "system_notification",
+                                        "message": "Another session has been opened for this user."
+                                    }))
+                                except: pass
+
                 self.redirect("/comfy/")
             else:
                 if user in BLOCKED_USERS:
@@ -1174,10 +1197,11 @@ class SendMessageHandler(BaseHandler):
         session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
+        session_index = session_data.get("session_index", 1)
         
         data = json.loads(self.request.body)
         message = data.get("message", "").strip()
-        to_user = data.get("to_user", "admin")
+        to_id = data.get("to_user", "admin")
         message_type = data.get("message_type", "text")
         file_data = data.get("file_data")
         
@@ -1185,9 +1209,12 @@ class SendMessageHandler(BaseHandler):
             self.write({"success": False, "error": "Message cannot be empty"})
             return
         
+        from_display = f"{username} #{session_index}"
         message_data = {
             "from": username,
-            "to": to_user,
+            "from_id": session_id,
+            "from_display": from_display,
+            "to": to_id,
             "message": message,
             "timestamp": time.time(),
             "read": False,
@@ -1198,16 +1225,20 @@ class SendMessageHandler(BaseHandler):
         if username not in CHAT_MESSAGES: CHAT_MESSAGES[username] = []
         CHAT_MESSAGES[username].append(message_data)
         
-        if to_user != "admin" and to_user != username:
-            if to_user not in CHAT_MESSAGES: CHAT_MESSAGES[to_user] = []
-            CHAT_MESSAGES[to_user].append(message_data)
+        if to_id != "admin" and to_id in sessions:
+            target_user = sessions[to_id]["user"]
+            if target_user != username:
+                if target_user not in CHAT_MESSAGES: CHAT_MESSAGES[target_user] = []
+                CHAT_MESSAGES[target_user].append(message_data)
 
         for ws in ADMIN_CHAT_WEBSOCKETS:
             try:
                 ws.write_message(json.dumps({
                     "type": "new_message",
                     "from_user": username,
-                    "to_user": to_user,
+                    "from_id": session_id,
+                    "from_display": from_display,
+                    "to_user": to_id,
                     "message": message,
                     "timestamp": time.time(),
                     "message_type": message_type,
@@ -1215,12 +1246,14 @@ class SendMessageHandler(BaseHandler):
                 }))
             except: pass
         
-        if to_user in USER_CHAT_WEBSOCKETS:
-            for ws in USER_CHAT_WEBSOCKETS[to_user]:
+        if to_id in USER_CHAT_WEBSOCKETS:
+            for ws in USER_CHAT_WEBSOCKETS[to_id]:
                 try:
                     ws.write_message(json.dumps({
                         "type": "new_message",
                         "from_user": username,
+                        "from_id": session_id,
+                        "from_display": from_display,
                         "message": message,
                         "timestamp": time.time(),
                         "message_type": message_type,
@@ -1240,9 +1273,10 @@ class UploadChatFileHandler(BaseHandler):
         session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
+        session_index = session_data.get("session_index", 1)
         
         message = self.get_argument("message", "").strip()
-        to_user = self.get_argument("to_user", "admin")
+        to_id = self.get_argument("to_user", "admin")
         
         file_data_list = []
         
@@ -1268,9 +1302,12 @@ class UploadChatFileHandler(BaseHandler):
             else:
                 message = f"Sent {len(file_data_list)} files"
         
+        from_display = f"{username} #{session_index}"
         message_data = {
             "from": username,
-            "to": to_user,
+            "from_id": session_id,
+            "from_display": from_display,
+            "to": to_id,
             "message": message,
             "timestamp": time.time(),
             "read": False,
@@ -1281,16 +1318,20 @@ class UploadChatFileHandler(BaseHandler):
         if username not in CHAT_MESSAGES: CHAT_MESSAGES[username] = []
         CHAT_MESSAGES[username].append(message_data)
         
-        if to_user != "admin" and to_user != username:
-            if to_user not in CHAT_MESSAGES: CHAT_MESSAGES[to_user] = []
-            CHAT_MESSAGES[to_user].append(message_data)
+        if to_id != "admin" and to_id in sessions:
+            target_user = sessions[to_id]["user"]
+            if target_user != username:
+                if target_user not in CHAT_MESSAGES: CHAT_MESSAGES[target_user] = []
+                CHAT_MESSAGES[target_user].append(message_data)
 
         for ws in ADMIN_CHAT_WEBSOCKETS:
             try:
                 ws.write_message(json.dumps({
                     "type": "new_message",
                     "from_user": username,
-                    "to_user": to_user,
+                    "from_id": session_id,
+                    "from_display": from_display,
+                    "to_user": to_id,
                     "message": message,
                     "timestamp": time.time(),
                     "message_type": "file" if file_data_list else "text",
@@ -1298,12 +1339,14 @@ class UploadChatFileHandler(BaseHandler):
                 }))
             except: pass
         
-        if to_user in USER_CHAT_WEBSOCKETS:
-            for ws in USER_CHAT_WEBSOCKETS[to_user]:
+        if to_id in USER_CHAT_WEBSOCKETS:
+            for ws in USER_CHAT_WEBSOCKETS[to_id]:
                 try:
                     ws.write_message(json.dumps({
                         "type": "new_message",
                         "from_user": username,
+                        "from_id": session_id,
+                        "from_display": from_display,
                         "message": message,
                         "timestamp": time.time(),
                         "message_type": "file" if file_data_list else "text",
@@ -1374,12 +1417,28 @@ class ChatUsersListHandler(BaseHandler):
             self.set_status(401)
             return
 
+        current_session_id = self.current_user
         user_list = []
-        for username in USERS:
-            # Puteam adăuga status (online/offline) bazat pe USER_CHAT_WEBSOCKETS
+
+        # Add Administrator
+        user_list.append({
+            "username": "admin",
+            "display_name": "Administrator",
+            "online": len(ADMIN_CHAT_WEBSOCKETS) > 0,
+            "is_session": False
+        })
+
+        # Add sessions
+        for sid, sdata in sessions.items():
+            if sid == current_session_id:
+                continue
+
             user_list.append({
-                "username": username,
-                "online": username in USER_CHAT_WEBSOCKETS
+                "username": sdata["user"],
+                "session_id": sid,
+                "display_name": f"{sdata['user']} #{sdata.get('session_index', 1)}",
+                "online": sid in USER_CHAT_WEBSOCKETS,
+                "is_session": True
             })
 
         self.write({"success": True, "users": user_list})
@@ -1422,6 +1481,8 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.username = None
+        self.session_id = None
+        self.session_index = 1
     
     def check_origin(self, origin):
         return True
@@ -1431,16 +1492,17 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
             self.close()
             return
         
-        session_id = self.current_user
-        session_data = get_session(session_id)
+        self.session_id = self.current_user
+        session_data = get_session(self.session_id)
         self.username = session_data["user"]
+        self.session_index = session_data.get("session_index", 1)
         
         if self.username not in CHAT_MESSAGES:
             CHAT_MESSAGES[self.username] = []
         
-        if self.username not in USER_CHAT_WEBSOCKETS:
-            USER_CHAT_WEBSOCKETS[self.username] = []
-        USER_CHAT_WEBSOCKETS[self.username].append(self)
+        if self.session_id not in USER_CHAT_WEBSOCKETS:
+            USER_CHAT_WEBSOCKETS[self.session_id] = []
+        USER_CHAT_WEBSOCKETS[self.session_id].append(self)
         
         unread_count = sum(1 for msg in CHAT_MESSAGES[self.username] if msg["from"] != self.username and not msg["read"])
         self.write_message(json.dumps({
@@ -1454,14 +1516,18 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
             
             if data.get("type") == "send_message":
                 message_text = data.get("message", "").strip()
-                to_user = data.get("to_user", "admin")
+                to_id = data.get("to_user", "admin") # Can be 'admin' or session_id
                 message_type = data.get("message_type", "text")
                 file_data = data.get("file_data")
                 
                 if message_text and self.username:
+                    from_display = f"{self.username} #{self.session_index}"
+
                     message_data = {
                         "from": self.username,
-                        "to": to_user,
+                        "from_id": self.session_id,
+                        "from_display": from_display,
+                        "to": to_id,
                         "message": message_text,
                         "timestamp": time.time(),
                         "read": False,
@@ -1469,22 +1535,27 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
                         "file_data": file_data
                     }
 
-                    # Store message for both users
+                    # Store message in history (global per user for now, but with session info)
                     if self.username not in CHAT_MESSAGES: CHAT_MESSAGES[self.username] = []
                     CHAT_MESSAGES[self.username].append(message_data)
                     
-                    if to_user != "admin" and to_user != self.username:
-                        if to_user not in CHAT_MESSAGES: CHAT_MESSAGES[to_user] = []
-                        CHAT_MESSAGES[to_user].append(message_data)
+                    # If recipient is another session of a different user, store there too
+                    if to_id != "admin" and to_id in sessions:
+                        target_user = sessions[to_id]["user"]
+                        if target_user != self.username:
+                            if target_user not in CHAT_MESSAGES: CHAT_MESSAGES[target_user] = []
+                            CHAT_MESSAGES[target_user].append(message_data)
 
                     # Notify Admin if relevant
-                    if to_user == "admin":
+                    if to_id == "admin":
                         for ws in ADMIN_CHAT_WEBSOCKETS:
                             try:
                                 ws.write_message(json.dumps({
                                     "type": "new_message",
                                     "from_user": self.username,
-                                    "to_user": to_user,
+                                    "from_id": self.session_id,
+                                    "from_display": from_display,
+                                    "to_user": to_id,
                                     "message": message_text,
                                     "timestamp": time.time(),
                                     "message_type": message_type,
@@ -1492,13 +1563,15 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
                                 }))
                             except: pass
 
-                    # Notify Recipient User
-                    if to_user in USER_CHAT_WEBSOCKETS:
-                        for ws in USER_CHAT_WEBSOCKETS[to_user]:
+                    # Notify Recipient Session
+                    if to_id in USER_CHAT_WEBSOCKETS:
+                        for ws in USER_CHAT_WEBSOCKETS[to_id]:
                             try:
                                 ws.write_message(json.dumps({
                                     "type": "new_message",
                                     "from_user": self.username,
+                                    "from_id": self.session_id,
+                                    "from_display": from_display,
                                     "message": message_text,
                                     "timestamp": time.time(),
                                     "message_type": message_type,
@@ -1540,11 +1613,11 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
             log.error(f"Error in chat WebSocket: {e}")
     
     def on_close(self):
-        if self.username and self.username in USER_CHAT_WEBSOCKETS:
-            if self in USER_CHAT_WEBSOCKETS[self.username]:
-                USER_CHAT_WEBSOCKETS[self.username].remove(self)
-            if not USER_CHAT_WEBSOCKETS[self.username]:
-                del USER_CHAT_WEBSOCKETS[self.username]
+        if self.session_id and self.session_id in USER_CHAT_WEBSOCKETS:
+            if self in USER_CHAT_WEBSOCKETS[self.session_id]:
+                USER_CHAT_WEBSOCKETS[self.session_id].remove(self)
+            if not USER_CHAT_WEBSOCKETS[self.session_id]:
+                del USER_CHAT_WEBSOCKETS[self.session_id]
 
 # === SESSION CHECK HANDLER ===
 class SessionCheckHandler(BaseHandler):
@@ -1583,10 +1656,13 @@ class SessionCheckHandler(BaseHandler):
                     self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
                     return
             
+            concurrent_sessions = [sid for sid, sdata in sessions.items() if sdata["user"] == username]
             self.write({
                 "status": "authenticated", 
                 "user": username, 
-                "time_remaining": int(time_remaining) if user_timeout > 0 else None
+                "time_remaining": int(time_remaining) if user_timeout > 0 else None,
+                "session_index": session_data.get("session_index", 1),
+                "has_concurrent_sessions": len(concurrent_sessions) > 1
             })
         else:
             self.write({"status": "not_authenticated"})
@@ -2275,17 +2351,19 @@ class AdminChatSendHandler(BaseHandler):
         }
         CHAT_MESSAGES[to_user].append(message_data)
         
-        if to_user in USER_CHAT_WEBSOCKETS:
-            for ws in USER_CHAT_WEBSOCKETS[to_user]:
-                try:
-                    ws.write_message(json.dumps({
-                        "type": "new_message",
-                        "from": "admin",
-                        "message": message,
-                        "timestamp": time.time()
-                    }))
-                except:
-                    pass
+        # Notify all sessions of this user
+        for sid, sdata in sessions.items():
+            if sdata["user"] == to_user and sid in USER_CHAT_WEBSOCKETS:
+                for ws in USER_CHAT_WEBSOCKETS[sid]:
+                    try:
+                        ws.write_message(json.dumps({
+                            "type": "new_message",
+                            "from": "admin",
+                            "message": message,
+                            "timestamp": time.time()
+                        }))
+                    except:
+                        pass
         
         self.write({"success": True})
 
@@ -2344,19 +2422,21 @@ class AdminChatUploadFileHandler(BaseHandler):
         }
         CHAT_MESSAGES[to_user].append(message_data)
         
-        if to_user in USER_CHAT_WEBSOCKETS:
-            for ws in USER_CHAT_WEBSOCKETS[to_user]:
-                try:
-                    ws.write_message(json.dumps({
-                        "type": "new_message",
-                        "from": "admin",
-                        "message": message,
-                        "timestamp": time.time(),
-                        "message_type": "file" if file_data_list else "text",
-                        "file_data": file_data_list[0] if len(file_data_list) == 1 else None
-                    }))
-                except:
-                    pass
+        # Notify all sessions of this user
+        for sid, sdata in sessions.items():
+            if sdata["user"] == to_user and sid in USER_CHAT_WEBSOCKETS:
+                for ws in USER_CHAT_WEBSOCKETS[sid]:
+                    try:
+                        ws.write_message(json.dumps({
+                            "type": "new_message",
+                            "from": "admin",
+                            "message": message,
+                            "timestamp": time.time(),
+                            "message_type": "file" if file_data_list else "text",
+                            "file_data": file_data_list[0] if len(file_data_list) == 1 else None
+                        }))
+                    except:
+                        pass
         
         self.write({"success": True})
 
@@ -2407,17 +2487,19 @@ class AdminChatWebSocketHandler(tornado.websocket.WebSocketHandler):
                     }
                     CHAT_MESSAGES[to_user].append(message_data)
                     
-                    if to_user in USER_CHAT_WEBSOCKETS:
-                        for ws in USER_CHAT_WEBSOCKETS[to_user]:
-                            try:
-                                ws.write_message(json.dumps({
-                                    "type": "new_message",
-                                    "from": "admin",
-                                    "message": message_text,
-                                    "timestamp": time.time()
-                                }))
-                            except:
-                                pass
+                    # Notify all sessions of this user
+                    for sid, sdata in sessions.items():
+                        if sdata["user"] == to_user and sid in USER_CHAT_WEBSOCKETS:
+                            for ws in USER_CHAT_WEBSOCKETS[sid]:
+                                try:
+                                    ws.write_message(json.dumps({
+                                        "type": "new_message",
+                                        "from": "admin",
+                                        "message": message_text,
+                                        "timestamp": time.time()
+                                    }))
+                                except:
+                                    pass
                     
                     self.write_message(json.dumps({
                         "type": "message_sent",
@@ -2921,7 +3003,8 @@ class MultiInstanceProxyHandler(BaseHandler):
                     
                     # Inject our UI only into HTML (only on success)
                     if is_html and response.code == 200:
-                        content = self._inject_ui(content, proxy_username)
+                        session_index = session_data.get("session_index", 1) if session_data else 1
+                        content = self._inject_ui(content, proxy_username, session_index)
                     
                     self.write(content.encode(encoding))
                 except Exception as e:
@@ -2944,7 +3027,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             self.set_status(502)
             self.write(f"Bad Gateway: {str(e)}")
     
-    def _inject_ui(self, html_content, username):
+    def _inject_ui(self, html_content, username, session_index=1):
         """Injects UI into HTML responses"""
         try:
             # Elimină CSP-ul care ar putea bloca resursele noastre
@@ -3078,7 +3161,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                     
                     const userInfo = document.createElement('div');
                     userInfo.className = 'comfy-user-info';
-                    userInfo.textContent = 'Welcome, {username}';
+                    userInfo.innerHTML = `Welcome, {username} <span style="color: red; font-weight: bold; margin-left: 5px;">#{session_index}</span>`;
                     
                     const serverTitle = document.createElement('div');
                     serverTitle.className = 'server-title';
@@ -3121,8 +3204,11 @@ class MultiInstanceProxyHandler(BaseHandler):
                 </script>
                 """
                 
+                # Pass session_index to our_injection template
+                our_injection = our_injection.replace("{session_index}", str(session_index))
                 html_content = html_content[:head_end_pos] + our_injection + html_content[head_end_pos:]
             else:
+                our_injection = our_injection.replace("{session_index}", str(session_index))
                 # Dacă nu găsim </head>, injectăm la începutul body sau la începutul documentului
                 body_match = re.search(r'<body>', html_content, re.IGNORECASE)
                 if body_match:

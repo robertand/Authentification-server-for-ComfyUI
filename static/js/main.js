@@ -254,13 +254,12 @@ function loadChatUsersList() {
                 const select = document.getElementById('chatRecipient');
                 const currentRecipient = select.value;
 
-                // Keep Admin, clear others
-                select.innerHTML = '<option value="admin">Administrator</option>';
+                select.innerHTML = '';
 
                 data.users.forEach(user => {
                     const option = document.createElement('option');
-                    option.value = user.username;
-                    option.textContent = user.username + (user.online ? ' (Online)' : '');
+                    option.value = user.is_session ? user.session_id : user.username;
+                    option.textContent = user.display_name + (user.online ? ' (Online)' : '');
                     select.appendChild(option);
                 });
 
@@ -307,7 +306,8 @@ function connectChatWebSocket() {
     chatWebSocket.onmessage = function(event) {
         const data = JSON.parse(event.data);
         if (data.type === 'new_message') {
-            addMessageToChat(data.message, data.from, data.timestamp, data.message_type, data.file_data);
+            const from_display = data.from_display || data.from;
+            addMessageToChat(data.message, from_display, data.timestamp, data.message_type, data.file_data);
             // Show notification if chat is closed
             if (document.getElementById('chatModal').style.display !== 'flex') {
                 hasUnreadMessages = true;
@@ -319,6 +319,8 @@ function connectChatWebSocket() {
             showTypingIndicator(data.username, data.typing);
         } else if (data.type === 'unread_count') {
             updateUnreadCount(data.count);
+        } else if (data.type === 'system_notification') {
+            showNotification(data.message, 'info');
         }
     };
     
@@ -336,7 +338,7 @@ function connectChatWebSocket() {
 function loadChatMessages() {
     const recipient = document.getElementById('chatRecipient').value;
     const usernameElement = document.querySelector('.comfy-user-info');
-    const myUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : '';
+    const myUsername = usernameElement ? usernameElement.textContent.replace(/Welcome, | #\d+/g, '') : '';
 
     fetch('/chat-messages', {
         method: 'GET',
@@ -350,16 +352,20 @@ function loadChatMessages() {
 
             data.messages.forEach(msg => {
                 // Filter messages: only show if I'm sender/receiver and the other person is the selected recipient
-                // Exception: if recipient is 'admin', show all messages with 'admin'
                 let show = false;
                 if (recipient === 'admin') {
                     if (msg.from === 'admin' || msg.to === 'admin') show = true;
                 } else {
-                    if ((msg.from === myUsername && msg.to === recipient) || (msg.from === recipient && msg.to === myUsername)) show = true;
+                    // Match by session_id (to_id/from_id) or username if it was an old style message
+                    if ((msg.from_id && (msg.from_id === recipient || msg.to === recipient)) ||
+                        (!msg.from_id && (msg.from === recipient || msg.to === recipient))) {
+                        show = true;
+                    }
                 }
 
                 if (show) {
-                    addMessageToChat(msg.message, msg.from, msg.timestamp, msg.message_type, msg.file_data, false);
+                    const from_display = msg.from_display || msg.from;
+                    addMessageToChat(msg.message, from_display, msg.timestamp, msg.message_type, msg.file_data, false);
                 }
             });
             scrollChatToBottom();
@@ -376,10 +382,11 @@ function loadChatMessages() {
 function addMessageToChat(message, from, timestamp, message_type = 'text', file_data = null, shouldScroll = true) {
     const chatMessages = document.getElementById('chatMessages');
     const usernameElement = document.querySelector('.comfy-user-info');
-    const myUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : '';
+    const myUsername = usernameElement ? usernameElement.textContent.replace(/Welcome, | #\d+/g, '') : '';
+    const cleanFrom = from.replace(/ #\d+/g, '');
 
     const messageDiv = document.createElement('div');
-    messageDiv.className = `chat-message ${from === myUsername ? 'user' : 'admin'}`;
+    messageDiv.className = `chat-message ${cleanFrom === myUsername ? 'user' : 'admin'}`;
     
     const time = new Date(timestamp * 1000).toLocaleTimeString();
     
@@ -413,7 +420,7 @@ function addMessageToChat(message, from, timestamp, message_type = 'text', file_
     
     const timeDiv = document.createElement('div');
     timeDiv.className = 'chat-message-time';
-    timeDiv.textContent = `${from === myUsername ? 'You' : from} • ${time}`;
+    timeDiv.textContent = `${cleanFrom === myUsername ? 'You ('+from+')' : from} • ${time}`;
     messageDiv.appendChild(timeDiv);
     
     // Add copy to clipboard functionality
@@ -479,7 +486,7 @@ function sendChatMessage() {
 function sendTextMessage(message) {
     const recipient = document.getElementById('chatRecipient').value;
     const usernameElement = document.querySelector('.comfy-user-info');
-    const myUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : 'user';
+    const myDisplay = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : 'user';
 
     if (chatWebSocket && chatWebSocket.readyState === WebSocket.OPEN) {
         chatWebSocket.send(JSON.stringify({
@@ -489,7 +496,7 @@ function sendTextMessage(message) {
             message_type: 'text'
         }));
         // Add message immediately to chat for better UX
-        addMessageToChat(message, myUsername, Date.now() / 1000);
+        addMessageToChat(message, myDisplay, Date.now() / 1000);
         document.getElementById('chatInput').value = '';
         scrollChatToBottom();
         stopTyping();
@@ -920,6 +927,11 @@ function checkSessionStatus() {
             const chatButton = document.getElementById('chatButton');
             if (chatButton) {
                 chatButton.style.display = 'flex';
+                if (data.has_concurrent_sessions) {
+                    chatButton.classList.add('concurrent-session');
+                } else {
+                    chatButton.classList.remove('concurrent-session');
+                }
             }
         }
     })
