@@ -59,7 +59,7 @@ function closeSessionExpiryModal() {
 }
 
 function redirectToLogin() {
-    window.location.href = '/login';
+    window.location.href = '/logout';
 }
 
 function logoutNow() {

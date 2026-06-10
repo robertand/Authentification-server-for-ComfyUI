@@ -528,6 +528,8 @@ def cleanup_stuck_sessions():
     FORCED_LOGOUT_SESSIONS.clear()
     BLOCKED_USERS.clear()
     LOCKED_USERS.clear()
+    if 'ALIAS_LOCKS' in globals():
+        ALIAS_LOCKS.clear()
     
     log.info("✓ Cleaned up stuck sessions and reset instance counts")
 
@@ -808,6 +810,13 @@ class BaseHandler(tornado.web.RequestHandler):
 
 class LoginHandler(BaseHandler):
     def get(self):
+        session_id = self.current_user
+        if session_id and session_id in FORCED_LOGOUT_SESSIONS:
+            FORCED_LOGOUT_SESSIONS.discard(session_id)
+            self.clear_cookie("session_id", path="/")
+            self.redirect("/login")
+            return
+
         if is_authenticated(self):
             self.redirect("/")
             return
@@ -1009,6 +1018,8 @@ class LogoutHandler(BaseHandler):
         username = "Unknown"
         
         if session_id:
+            if session_id in FORCED_LOGOUT_SESSIONS:
+                FORCED_LOGOUT_SESSIONS.discard(session_id)
             if session_id in sessions:
                 username = sessions[session_id].get("user", "Unknown")
                 if username in USERS:
@@ -2317,6 +2328,7 @@ class AdminTerminateSessionHandler(BaseHandler):
                         ws.close()
 
                 # Log logout in usage stats
+                FORCED_LOGOUT_SESSIONS.add(session_id)
                 record_session_end(session_id)
                 clear_user_first_session(session_id)
                 del sessions[session_id]
@@ -2875,7 +2887,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                 if (typeof openForcedLogoutModal === 'function') {
                     openForcedLogoutModal();
                 } else {
-                    window.location.href = '/login';
+                    window.location.href = '/logout';
                 }
                 </script>
                 </body>

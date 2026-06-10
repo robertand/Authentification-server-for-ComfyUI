@@ -18,7 +18,7 @@
     "user2": {
       "password": "$2b$12$0vf5XG8ctmNaUKCiUuzHhu3sxHO2gShKuyBRgEr.absE2PTm8WBBW",
       "comfy_url": "http://10.129.131.12:8188",
-      "instances": 0,
+      "instances": 2,
       "max_instances": 2,
       "session_timeout": 60,
       "enabled": true,
