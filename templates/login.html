@@ -12,19 +12,154 @@
         margin-left: 5px; 
         display: inline-block; 
     }
+    .login-phase-select .login-form-fields,
+    .login-phase-select .login-alias-section { display: none; }
+    .login-phase-alias .user-status-grid,
+    .login-phase-alias .user-status-title,
+    .login-phase-alias .login-form-fields { display: none; }
+    .login-phase-alias .login-alias-section { display: block; }
+    .login-phase-alias .user-status-container { border-left-color: #28a745; }
+    .login-phase-password .user-status-grid,
+    .login-phase-password .user-status-title,
+    .login-phase-password .login-alias-section { display: none; }
+    .login-phase-password .login-form-fields { display: block; }
+    .login-phase-password .user-status-container { border-left-color: #007bff; }
+
+    .user-status-grid {
+        transition: all 0.4s ease;
+    }
+    .user-status-item {
+        transition: all 0.4s ease;
+        cursor: pointer;
+    }
+    .user-status-item.user-selected {
+        transform: scale(1.05);
+        border-left-color: #007bff;
+        background: rgba(0, 123, 255, 0.15);
+        box-shadow: 0 0 15px rgba(0, 123, 255, 0.3);
+    }
+    .user-status-item.user-deselected {
+        opacity: 0;
+        transform: translateY(30px);
+        pointer-events: none;
+    }
+    .login-form-fields,
+    .login-alias-section {
+        animation: fadeSlideIn 0.5s ease;
+    }
+    @keyframes fadeSlideIn {
+        from { opacity: 0; transform: translateY(-10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .login-back-btn {
+        background: none;
+        border: none;
+        color: #007bff;
+        cursor: pointer;
+        font-size: 13px;
+        padding: 5px;
+        margin-top: 10px;
+        width: auto;
+        display: inline-block;
+    }
+    .login-back-btn:hover {
+        text-decoration: underline;
+        background: none;
+    }
+    .login-title {
+        cursor: pointer;
+        user-select: none;
+    }
+    .login-selected-user {
+        display: none;
+        font-size: 20px;
+        font-weight: bold;
+        color: #007bff;
+        margin-bottom: 15px;
+        text-align: center;
+    }
+    .alias-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 10px;
+        margin-top: 10px;
+    }
+    .alias-item {
+        background: #333;
+        padding: 10px;
+        border-radius: 5px;
+        cursor: pointer;
+        text-align: center;
+        font-weight: bold;
+        transition: all 0.3s;
+        border-left: 3px solid #28a745;
+    }
+    .alias-item:hover {
+        background: #444;
+        transform: scale(1.05);
+    }
+    .alias-item.alias-locked {
+        border-left-color: #dc3545;
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .alias-item.alias-locked:hover {
+        transform: none;
+    }
+    .alias-add-row {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+        align-items: center;
+        justify-content: center;
+    }
+    .alias-add-row input {
+        width: 60%;
+        padding: 10px;
+        border: 1px solid #444;
+        background: #333;
+        color: #e0e0e0;
+        border-radius: 5px;
+        font-size: 14px;
+    }
+    .alias-add-row button {
+        width: auto;
+        padding: 10px 20px;
+        background: #28a745;
+    }
+    .alias-add-row button:hover {
+        background: #218838;
+    }
 </style>
 </head>
 <body>
     <button class="about-btn-login" onclick="openAboutDrawer()">?</button>
-    <div class="container" id="loginContainer">
-        <div class="login-title">ComfyUI Login</div>
+    <div class="container login-phase-select" id="loginContainer">
+        <div class="login-title" onclick="resetLoginPhase()">ComfyUI Login</div>
         <div class="login-subtitle">ADA</div>
         <div id="plugin-notification" style="display:none; background:rgba(255, 193, 7, 0.2); border: 1px solid #ffc107; color:#ffc107; padding:10px; margin-bottom:15px; border-radius:5px; font-size:24px; font-weight:bold; text-align:center;"></div>
-        <form method="post" action="/login">
+        
+        <div class="login-selected-user" id="loginSelectedUser"></div>
+        
+        <form method="post" action="/login" id="loginForm">
             {% raw xsrf_form_html() %}
-            <input name="username" placeholder="Username" required><br>
-            <input type="password" name="password" placeholder="Password" required><br>
-            <button type="submit">Login</button>
+            <input name="username" id="loginUsername" placeholder="Username" required style="display:none;">
+            <input name="alias" id="loginAlias" placeholder="Alias" style="display:none;">
+            <div class="login-alias-section">
+                <div style="font-size:16px; font-weight:bold; color:#28a745; margin-bottom:10px;">Choose or add an alias</div>
+                <div class="alias-grid" id="aliasGrid"></div>
+                <div class="alias-add-row">
+                    <input type="text" id="newAliasInput" placeholder="New alias name...">
+                    <button type="button" onclick="addNewAlias()">+ Add</button>
+                </div>
+                <button type="button" class="login-back-btn" onclick="resetLoginPhase()">&#8592; Choose another user</button>
+            </div>
+            <div class="login-form-fields">
+                <div style="font-size:16px; font-weight:bold; color:#007bff; margin-bottom:5px;">Alias: <span id="chosenAliasDisplay"></span></div>
+                <input type="password" name="password" id="loginPassword" placeholder="Password" required autocomplete="off"><br>
+                <button type="submit">Login</button>
+                <button type="button" class="login-back-btn" onclick="resetLoginPhase()">&#8592; Choose another user</button>
+            </div>
         </form>
         {% if error %}
             <p class="error">{{ error }}</p>
@@ -32,7 +167,7 @@
         
         <!-- User Status Section -->
         <div class="user-status-container">
-            <div class="user-status-title">User Status</div>
+            <div class="user-status-title">Select a user</div>
             <div class="user-status-grid" id="userStatusGrid">
                 <!-- User status will be loaded here by JavaScript -->
             </div>
@@ -46,11 +181,13 @@
     
     <script src="/static/js/main.js"></script>
     <script>
+    var selectedUsername = null;
+    var selectedAlias = null;
+
     function loadUserStatus() {
         fetch('/user-status')
             .then(response => response.json())
             .then(data => {
-                // Update plugin notification
                 const pluginNotif = document.getElementById('plugin-notification');
                 if (data.plugins_active && data.plugins_active.length > 0) {
                     pluginNotif.textContent = "Server is enrolled in Plugin: " + data.plugins_active.join(", ");
@@ -66,8 +203,13 @@
                     const item = document.createElement('div');
                     let statusClass = 'user-status-offline';
                     let statusText = 'Offline';
+                    let lockIcon = '';
                     
-                    if (!user.enabled) {
+                    if (user.locked) {
+                        statusClass = 'user-status-locked';
+                        statusText = 'Locked';
+                        lockIcon = ' &#128274;';
+                    } else if (!user.enabled) {
                         statusClass = 'user-status-disabled';
                         statusText = 'Disabled';
                     } else if (user.instances > 0 && user.instances < user.max_instances) {
@@ -88,7 +230,7 @@
                     
                     item.innerHTML = 
                         '<div>' +
-                            '<div class="user-status-username">' + user.username + nginxBadge + '</div>' +
+                            '<div class="user-status-username">' + user.username + lockIcon + nginxBadge + '</div>' +
                             '<div class="user-status-info">' + statusText + '</div>' +
                         '</div>' +
                         '<div class="user-status-info">' +
@@ -96,30 +238,138 @@
                         '</div>';
                     
                     item.onclick = function() {
-                        autocompleteUsername(user.username);
+                        selectUser(user.username);
                     };
                     grid.appendChild(item);
                 });
+                
+                // Reload aliases too
+                loadAliases();
             })
             .catch(error => {
                 console.log('Error loading user status:', error);
             });
     }
+
+    function loadAliases() {
+        fetch('/aliases')
+            .then(response => response.json())
+            .then(data => {
+                const grid = document.getElementById('aliasGrid');
+                grid.innerHTML = '';
+                (data.aliases || []).forEach(function(alias) {
+                    const item = document.createElement('div');
+                    item.className = 'alias-item';
+                    item.textContent = alias;
+                    item.onclick = function() { selectAlias(alias); };
+                    grid.appendChild(item);
+                });
+                // Refresh lock status for each alias
+                updateAliasLockStatus();
+            })
+            .catch(function(e) { console.log('Error loading aliases:', e); });
+    }
+
+    function updateAliasLockStatus() {
+        // Alias lock status comes from the session check
+        fetch('/aliases')
+            .then(r => r.json())
+            .then(data => {
+                // We don't have per-alias lock from this endpoint,
+                // will rely on server-side validation
+            })
+            .catch(function(e) {});
+    }
+
+    function selectUser(username) {
+        if (selectedUsername === username) return;
+        selectedUsername = username;
+        selectedAlias = null;
+        document.getElementById('loginUsername').value = username;
+        document.getElementById('loginSelectedUser').textContent = username;
+        document.getElementById('loginSelectedUser').style.display = 'block';
+
+        const container = document.getElementById('loginContainer');
+        container.classList.remove('login-phase-select', 'login-phase-password');
+        container.classList.add('login-phase-alias');
+
+        const items = document.querySelectorAll('.user-status-item');
+        items.forEach(item => {
+            const nameEl = item.querySelector('.user-status-username');
+            if (nameEl && nameEl.textContent.trim().startsWith(username)) {
+                item.classList.add('user-selected');
+            } else {
+                item.classList.add('user-deselected');
+            }
+        });
+
+        loadAliases();
+    }
+
+    function selectAlias(alias) {
+        selectedAlias = alias;
+        document.getElementById('loginAlias').value = alias;
+        document.getElementById('chosenAliasDisplay').textContent = alias;
+
+        const container = document.getElementById('loginContainer');
+        container.classList.remove('login-phase-alias');
+        container.classList.add('login-phase-password');
+
+        setTimeout(function() {
+            document.getElementById('loginPassword').focus();
+        }, 500);
+    }
+
+    function addNewAlias() {
+        const input = document.getElementById('newAliasInput');
+        const alias = input.value.trim();
+        if (!alias) return;
+        fetch('/aliases', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            credentials: 'include',
+            body: JSON.stringify({alias: alias})
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                input.value = '';
+                loadAliases();
+                selectAlias(alias);
+            } else {
+                alert(data.error || 'Failed to add alias');
+            }
+        })
+        .catch(function(e) { alert('Error adding alias'); });
+    }
+
+    function resetLoginPhase() {
+        selectedUsername = null;
+        selectedAlias = null;
+        document.getElementById('loginUsername').value = '';
+        document.getElementById('loginAlias').value = '';
+        document.getElementById('loginPassword').value = '';
+        document.getElementById('loginSelectedUser').style.display = 'none';
+
+        const container = document.getElementById('loginContainer');
+        container.classList.remove('login-phase-password', 'login-phase-alias');
+        container.classList.add('login-phase-select');
+
+        const items = document.querySelectorAll('.user-status-item');
+        items.forEach(item => {
+            item.classList.remove('user-selected', 'user-deselected');
+        });
+    }
     
     document.addEventListener('DOMContentLoaded', function() {
         loadUserStatus();
-        setInterval(loadUserStatus, 10000); // Refresh every 10 seconds
+        setInterval(loadUserStatus, 10000);
 
-        // Auto-fill username from URL
         const urlParams = new URLSearchParams(window.location.search);
         const username = urlParams.get('username');
         if (username) {
-            autocompleteUsername(username);
+            selectUser(username);
         }
     });
-    
-    function autocompleteUsername(username) {
-        document.querySelector('input[name="username"]').value = username;
-    }
     </script>
 </body></html>

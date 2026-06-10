@@ -1,0 +1,47 @@
+{
+  "auth_port": 7861,
+  "admin_port": 8199,
+  "users": {
+    "user1": {
+      "password": "$2b$12$jjWeTD9a/8q.J3I/RbJzQubRmCqOuHXpgnz8fwIJziUWUMij84ttK",
+      "comfy_url": "http://127.0.0.1:8188",
+      "instances": 2,
+      "max_instances": 2,
+      "session_timeout": 60,
+      "enabled": true,
+      "nginx_auth": {
+        "enabled": false,
+        "username": "",
+        "password": ""
+      }
+    },
+    "user2": {
+      "password": "$2b$12$0vf5XG8ctmNaUKCiUuzHhu3sxHO2gShKuyBRgEr.absE2PTm8WBBW",
+      "comfy_url": "http://10.129.131.12:8188",
+      "instances": 0,
+      "max_instances": 2,
+      "session_timeout": 60,
+      "enabled": true,
+      "nginx_auth": {
+        "enabled": false,
+        "username": "",
+        "password": ""
+      }
+    }
+  },
+  "admin": {
+    "password": "$2b$12$AfBhHpT3Y9vNJ467QvlHM.KedSwvp.0YnFBH2CHnnpoeBaEdBPzju",
+    "enabled": true
+  },
+  "workflow_root": "/mnt/prouser/spatiu/ComfyUI/workflows",
+  "global_nginx_auth": {
+    "enabled": false,
+    "username": "",
+    "password": ""
+  },
+  "cookie_secret": "86K+siYmensJ6VJW5ICs6Mxfb8eEbpa/9/PAKIa9YfA=",
+  "aliases": [
+    "robert",
+    "ioan"
+  ]
+}

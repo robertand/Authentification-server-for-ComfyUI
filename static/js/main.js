@@ -254,13 +254,12 @@ function loadChatUsersList() {
                 const select = document.getElementById('chatRecipient');
                 const currentRecipient = select.value;
 
-                // Keep Admin, clear others
-                select.innerHTML = '<option value="admin">Administrator</option>';
+                select.innerHTML = '';
 
                 data.users.forEach(user => {
                     const option = document.createElement('option');
-                    option.value = user.username;
-                    option.textContent = user.username + (user.online ? ' (Online)' : '');
+                    option.value = user.is_session ? user.session_id : user.username;
+                    option.textContent = user.display_name + (user.online ? ' (Online)' : '');
                     select.appendChild(option);
                 });
 
@@ -307,7 +306,8 @@ function connectChatWebSocket() {
     chatWebSocket.onmessage = function(event) {
         const data = JSON.parse(event.data);
         if (data.type === 'new_message') {
-            addMessageToChat(data.message, data.from, data.timestamp, data.message_type, data.file_data);
+            const from_display = data.from_display || data.from;
+            addMessageToChat(data.message, from_display, data.timestamp, data.message_type, data.file_data);
             // Show notification if chat is closed
             if (document.getElementById('chatModal').style.display !== 'flex') {
                 hasUnreadMessages = true;
@@ -319,6 +319,10 @@ function connectChatWebSocket() {
             showTypingIndicator(data.username, data.typing);
         } else if (data.type === 'unread_count') {
             updateUnreadCount(data.count);
+        } else if (data.type === 'system_notification') {
+            showNotification(data.message, 'info');
+        } else if (data.type === 'concurrent_user') {
+            openConcurrentUserModal(data.username, data.session_index, data.alias);
         }
     };
     
@@ -336,7 +340,7 @@ function connectChatWebSocket() {
 function loadChatMessages() {
     const recipient = document.getElementById('chatRecipient').value;
     const usernameElement = document.querySelector('.comfy-user-info');
-    const myUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : '';
+    const myUsername = usernameElement ? usernameElement.textContent.replace(/Welcome, | #\d+/g, '') : '';
 
     fetch('/chat-messages', {
         method: 'GET',
@@ -350,16 +354,20 @@ function loadChatMessages() {
 
             data.messages.forEach(msg => {
                 // Filter messages: only show if I'm sender/receiver and the other person is the selected recipient
-                // Exception: if recipient is 'admin', show all messages with 'admin'
                 let show = false;
                 if (recipient === 'admin') {
                     if (msg.from === 'admin' || msg.to === 'admin') show = true;
                 } else {
-                    if ((msg.from === myUsername && msg.to === recipient) || (msg.from === recipient && msg.to === myUsername)) show = true;
+                    // Match by session_id (to_id/from_id) or username if it was an old style message
+                    if ((msg.from_id && (msg.from_id === recipient || msg.to === recipient)) ||
+                        (!msg.from_id && (msg.from === recipient || msg.to === recipient))) {
+                        show = true;
+                    }
                 }
 
                 if (show) {
-                    addMessageToChat(msg.message, msg.from, msg.timestamp, msg.message_type, msg.file_data, false);
+                    const from_display = msg.from_display || msg.from;
+                    addMessageToChat(msg.message, from_display, msg.timestamp, msg.message_type, msg.file_data, false);
                 }
             });
             scrollChatToBottom();
@@ -376,10 +384,11 @@ function loadChatMessages() {
 function addMessageToChat(message, from, timestamp, message_type = 'text', file_data = null, shouldScroll = true) {
     const chatMessages = document.getElementById('chatMessages');
     const usernameElement = document.querySelector('.comfy-user-info');
-    const myUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : '';
+    const myUsername = usernameElement ? usernameElement.textContent.replace(/Welcome, | #\d+/g, '') : '';
+    const cleanFrom = from.replace(/ #\d+/g, '');
 
     const messageDiv = document.createElement('div');
-    messageDiv.className = `chat-message ${from === myUsername ? 'user' : 'admin'}`;
+    messageDiv.className = `chat-message ${cleanFrom === myUsername ? 'user' : 'admin'}`;
     
     const time = new Date(timestamp * 1000).toLocaleTimeString();
     
@@ -413,7 +422,7 @@ function addMessageToChat(message, from, timestamp, message_type = 'text', file_
     
     const timeDiv = document.createElement('div');
     timeDiv.className = 'chat-message-time';
-    timeDiv.textContent = `${from === myUsername ? 'You' : from} • ${time}`;
+    timeDiv.textContent = `${cleanFrom === myUsername ? 'You ('+from+')' : from} • ${time}`;
     messageDiv.appendChild(timeDiv);
     
     // Add copy to clipboard functionality
@@ -479,7 +488,7 @@ function sendChatMessage() {
 function sendTextMessage(message) {
     const recipient = document.getElementById('chatRecipient').value;
     const usernameElement = document.querySelector('.comfy-user-info');
-    const myUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : 'user';
+    const myDisplay = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : 'user';
 
     if (chatWebSocket && chatWebSocket.readyState === WebSocket.OPEN) {
         chatWebSocket.send(JSON.stringify({
@@ -489,7 +498,7 @@ function sendTextMessage(message) {
             message_type: 'text'
         }));
         // Add message immediately to chat for better UX
-        addMessageToChat(message, myUsername, Date.now() / 1000);
+        addMessageToChat(message, myDisplay, Date.now() / 1000);
         document.getElementById('chatInput').value = '';
         scrollChatToBottom();
         stopTyping();
@@ -709,6 +718,103 @@ function stopChatAutoRefresh() {
 }
 
 
+// User Lock Functions
+function toggleUserLock() {
+    fetch('/single-user-lock', {
+        method: 'POST',
+        credentials: 'include'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success === false) {
+            showNotification(data.error || 'Cannot toggle lock.', 'error');
+            return;
+        }
+        updateLockButton(data.locked, data.session_index, data.alias, data.handover_lock_available);
+        if (data.locked) {
+            showNotification('Account locked. Other users cannot login as you.', 'info');
+        } else {
+            showNotification('Account unlocked.', 'info');
+        }
+    })
+    .catch(error => {
+        console.log('Lock toggle error:', error);
+    });
+}
+
+function checkUserLockStatus() {
+    fetch('/single-user-lock', {
+        method: 'GET',
+        credentials: 'include'
+    })
+    .then(response => response.json())
+    .then(data => {
+        updateLockButton(data.locked, data.session_index, data.alias, data.handover_lock_available);
+        updateSessionIndexDisplay(data.session_index, data.alias);
+    })
+    .catch(error => {
+        console.log('Lock status error:', error);
+    });
+}
+
+function updateLockButton(locked, sessionIndex, alias, handoverLockAvailable) {
+    const btn = document.getElementById('comfyLockBtn');
+    if (!btn) return;
+    if (alias && handoverLockAvailable) {
+        btn.style.display = '';
+    } else {
+        btn.style.display = 'none';
+        return;
+    }
+    if (locked) {
+        btn.classList.add('locked');
+        btn.textContent = '\u{1F512}';
+        btn.title = 'Unlock this user - allow other logins';
+    } else {
+        btn.classList.remove('locked');
+        btn.textContent = '\u{1F513}';
+        btn.title = 'Lock this user - prevent other logins';
+    }
+}
+
+function updateSessionIndexDisplay(sessionIndex, alias) {
+    const userInfo = document.querySelector('.comfy-user-info');
+    if (!userInfo) return;
+    const span = userInfo.querySelector('span[style*="color: red"]');
+    if (!span) return;
+    if (alias) {
+        span.textContent = alias;
+    } else if (sessionIndex) {
+        span.textContent = '#' + sessionIndex;
+    }
+}
+
+// Concurrent User Modal Functions
+function openConcurrentUserModal(username, sessionIndex, alias) {
+    const modal = document.getElementById('concurrentUserModal');
+    const message = document.getElementById('concurrentUserMessage');
+    const info = document.getElementById('concurrentUserInfo');
+    if (username) {
+        message.textContent = `User ${username} has connected to the server.`;
+        if (alias) {
+            info.textContent = `${username} as ${alias}`;
+        } else if (sessionIndex) {
+            info.textContent = `${username} #${sessionIndex}`;
+        } else {
+            info.textContent = username;
+        }
+    } else {
+        message.textContent = 'Another user has connected to the server.';
+        info.textContent = '';
+    }
+    modal.style.display = 'block';
+    setTimeout(() => { modal.style.display = 'none'; }, 10000);
+}
+
+function closeConcurrentUserModal() {
+    document.getElementById('concurrentUserModal').style.display = 'none';
+}
+
 // Function to show notifications
 function showNotification(message, type = 'info') {
     const notification = document.createElement('div');
@@ -920,6 +1026,23 @@ function checkSessionStatus() {
             const chatButton = document.getElementById('chatButton');
             if (chatButton) {
                 chatButton.style.display = 'flex';
+                if (data.has_concurrent_sessions) {
+                    chatButton.classList.add('concurrent-session');
+                } else {
+                    chatButton.classList.remove('concurrent-session');
+                }
+            }
+            // Update lock button visibility and alias/index display
+            if (data.session_index) {
+                updateSessionIndexDisplay(data.session_index, data.alias);
+                const lockBtn = document.getElementById('comfyLockBtn');
+                if (lockBtn) {
+                    if (data.alias && data.handover_lock_available) {
+                        lockBtn.style.display = '';
+                    } else {
+                        lockBtn.style.display = 'none';
+                    }
+                }
             }
         }
     })
@@ -947,6 +1070,46 @@ function initSessionMonitoring() {
     
     // Initial check
     checkSessionStatus();
+    checkUserLockStatus();
+}
+
+// Make chat button draggable
+function makeChatButtonDraggable() {
+    const btn = document.getElementById('chatButton');
+    if (!btn) return;
+    let isDragging = false;
+    let dragOffsetX, dragOffsetY;
+    btn.addEventListener('mousedown', function(e) {
+        if (e.target !== btn && e.target.id !== 'chatButton') return;
+        isDragging = false;
+        const rect = btn.getBoundingClientRect();
+        dragOffsetX = e.clientX - rect.left;
+        dragOffsetY = e.clientY - rect.top;
+        function onMouseMove(e) {
+            isDragging = true;
+            btn.style.left = (e.clientX - dragOffsetX) + 'px';
+            btn.style.top = (e.clientY - dragOffsetY) + 'px';
+            btn.style.right = 'auto';
+            btn.style.bottom = 'auto';
+        }
+        function onMouseUp(e) {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            if (isDragging) {
+                e.stopPropagation();
+                e.preventDefault();
+            }
+        }
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    });
+    btn.addEventListener('click', function(e) {
+        if (isDragging) {
+            e.stopPropagation();
+            e.preventDefault();
+            isDragging = false;
+        }
+    });
 }
 
 // Start session monitoring when page loads
@@ -964,6 +1127,12 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Connect to chat WebSocket
     connectChatWebSocket();
+    
+    // Make chat button draggable
+    setTimeout(makeChatButtonDraggable, 2000);
+    
+    // Check lock status on page load
+    setTimeout(checkUserLockStatus, 1000);
 });
 
 // Also start when window loads (fallback)
