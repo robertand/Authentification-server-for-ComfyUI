@@ -298,7 +298,6 @@ BLOCKED_USERS = {}
 FORCED_LOGOUT_SESSIONS = set()
 LOCKED_USERS = set()
 ALIASES = []
-ALIAS_LOCKS = set()
 USER_FIRST_SESSION = {}
 
 comfy_instances_ready = {}
@@ -528,6 +527,7 @@ def cleanup_stuck_sessions():
     USER_FIRST_SESSION.clear()
     FORCED_LOGOUT_SESSIONS.clear()
     BLOCKED_USERS.clear()
+    LOCKED_USERS.clear()
     
     log.info("✓ Cleaned up stuck sessions and reset instance counts")
 
@@ -705,6 +705,7 @@ def clear_user_first_session(session_id):
     for user, sid in list(USER_FIRST_SESSION.items()):
         if sid == session_id:
             del USER_FIRST_SESSION[user]
+            LOCKED_USERS.discard(user)
             return
 
 def is_handover_lock_available(session_data, session_id):
@@ -861,12 +862,6 @@ class LoginHandler(BaseHandler):
             alias = self.get_argument("alias", "").strip()
             if alias and alias not in ALIASES:
                 alias = ""
-            if alias and alias in ALIAS_LOCKS:
-                self.render("login.html",
-                    error=f'Alias "{alias}" is currently locked!',
-                    about_modal=ABOUT_DRAWER_HTML
-                )
-                return
 
             if can_user_login(user):
                 session_id = create_session(user, alias=alias if alias else None)
@@ -1631,6 +1626,9 @@ class SessionCheckHandler(BaseHandler):
             self.write({"status": "forced_logout"})
             return
         
+        # We need to check if it's a forced logout even if it's not in the sessions dict anymore
+        # because current_user might still return the old session_id from cookie
+
         session_data = get_session(session_id)
         if session_data:
             username = session_data["user"]
@@ -1750,7 +1748,7 @@ class SingleUserLockHandler(BaseHandler):
             return
         username = session_data["user"]
         alias = session_data.get("alias", "")
-        locked = alias in ALIAS_LOCKS if alias else username in LOCKED_USERS
+        locked = username in LOCKED_USERS
         self.write({
             "locked": locked,
             "session_index": session_data.get("session_index", 1),
@@ -1773,18 +1771,15 @@ class SingleUserLockHandler(BaseHandler):
             return
 
         alias = session_data.get("alias", "")
-        if not alias:
-            self.write({"success": False, "error": "No alias assigned to this session"})
-            return
+        username = session_data["user"]
 
-        if alias in ALIAS_LOCKS:
-            ALIAS_LOCKS.discard(alias)
-            log.info(f"Alias {alias} unlocked")
-            self.write({"success": True, "locked": False, "alias": alias, "session_index": session_data.get("session_index", 1), "handover_lock_available": True, "message": "Alias unlocked"})
+        if username in LOCKED_USERS:
+            LOCKED_USERS.discard(username)
+            log.info(f"User {username} unlocked")
+            self.write({"success": True, "locked": False, "alias": alias, "session_index": session_data.get("session_index", 1), "handover_lock_available": True, "message": "User unlocked"})
         else:
-            ALIAS_LOCKS.add(alias)
-            # Terminate all other sessions of the same user (regardless of alias)
-            username = session_data["user"]
+            LOCKED_USERS.add(username)
+            # Terminate all other sessions of the same user
             other_sessions = [sid for sid, sdata in sessions.items()
                               if sdata["user"] == username and sid != session_id]
             for sid in other_sessions:
@@ -1793,22 +1788,23 @@ class SingleUserLockHandler(BaseHandler):
                         try:
                             ws.write_message(json.dumps({
                                 "type": "system_notification",
-                                "message": f"Session terminated because alias {alias} is now locked."
+                                "message": f"Session terminated because user {username} locked the account."
                             }))
                             ws.close()
                         except:
                             pass
                 if sid in sessions:
                     user_of_sid = sessions[sid]["user"]
-                    clear_user_first_session(sid)
+                    FORCED_LOGOUT_SESSIONS.add(sid)
+                    # Don't clear_user_first_session here to avoid removing lock if this was first session
                     del sessions[sid]
                     if user_of_sid in USERS:
                         USERS[user_of_sid]["instances"] = max(0, USERS[user_of_sid]["instances"] - 1)
                     record_session_end(sid)
                     renumber_session_indices(user_of_sid)
 
-            log.info(f"Alias {alias} locked, terminated {len(other_sessions)} other session(s)")
-            self.write({"success": True, "locked": True, "alias": alias, "session_index": session_data.get("session_index", 1), "handover_lock_available": True, "message": "Alias locked, other sessions terminated"})
+            log.info(f"User {username} locked (alias: {alias}), terminated {len(other_sessions)} other session(s)")
+            self.write({"success": True, "locked": True, "alias": alias, "session_index": session_data.get("session_index", 1), "handover_lock_available": True, "message": "Account locked exclusively for this session, other sessions terminated"})
 
 # === ADMIN AUTH HANDLERS - CORECTATE ===
 class AdminLoginHandler(BaseHandler):

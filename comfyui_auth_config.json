@@ -5,7 +5,7 @@
     "user1": {
       "password": "$2b$12$jjWeTD9a/8q.J3I/RbJzQubRmCqOuHXpgnz8fwIJziUWUMij84ttK",
       "comfy_url": "http://127.0.0.1:8188",
-      "instances": 2,
+      "instances": 0,
       "max_instances": 2,
       "session_timeout": 60,
       "enabled": true,
