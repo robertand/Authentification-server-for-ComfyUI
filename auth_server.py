@@ -127,6 +127,16 @@ SESSION_MODALS_HTML = """
         </div>
     </div>
 </div>
+
+<div id="concurrentUserModal" class="concurrent-user-modal">
+    <div class="concurrent-user-modal-content">
+        <h2>New User Connected</h2>
+        <div class="concurrent-user-icon">&#128100;</div>
+        <p id="concurrentUserMessage">Another user has connected to the server.</p>
+        <div class="concurrent-user-info" id="concurrentUserInfo"></div>
+        <button class="concurrent-user-btn" onclick="closeConcurrentUserModal()">OK</button>
+    </div>
+</div>
 """
 
 # === CONFIGURARE ===
@@ -286,6 +296,10 @@ DEFAULT_SESSION_TIMEOUT = 3600
 EXTERNAL_INSTANCES = {}
 BLOCKED_USERS = {}
 FORCED_LOGOUT_SESSIONS = set()
+LOCKED_USERS = set()
+ALIASES = []
+ALIAS_LOCKS = set()
+USER_FIRST_SESSION = {}
 
 comfy_instances_ready = {}
 
@@ -480,6 +494,10 @@ def load_config():
     AUTH_PORT = config.get("auth_port", 7861)
     ADMIN_PORT = config.get("admin_port", 8199)
 
+    if "aliases" in config:
+        global ALIASES
+        ALIASES = config["aliases"]
+
     return config
 
 def save_config():
@@ -491,7 +509,8 @@ def save_config():
             "admin": ADMIN_CONFIG,
             "workflow_root": WORKFLOW_ROOT_DIR,
             "global_nginx_auth": GLOBAL_NGINX_AUTH,
-            "cookie_secret": config.get("cookie_secret")
+            "cookie_secret": config.get("cookie_secret"),
+            "aliases": ALIASES
         }
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
@@ -506,6 +525,7 @@ def cleanup_stuck_sessions():
         USERS[username]["instances"] = 0
     
     sessions.clear()
+    USER_FIRST_SESSION.clear()
     FORCED_LOGOUT_SESSIONS.clear()
     BLOCKED_USERS.clear()
     
@@ -616,136 +636,96 @@ def cleanup_sessions():
                     USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
     
     for session_id in expired_sessions:
+        username = sessions[session_id]["user"]
         record_session_end(session_id)
+        clear_user_first_session(session_id)
         del sessions[session_id]
+        renumber_session_indices(username)
 
-def cleanup_admin_sessions():
-    current_time = time.time()
-    expired_sessions = []
-    
-    for session_id, session_data in admin_sessions.items():
-        if current_time - session_data["created"] > DEFAULT_SESSION_TIMEOUT:
-            expired_sessions.append(session_id)
-    
-    for session_id in expired_sessions:
-        del admin_sessions[session_id]
-
-def cleanup_blocked_users():
-    current_time = time.time()
-    expired_users = []
-    
-    for username, expiry_time in BLOCKED_USERS.items():
-        if current_time > expiry_time:
-            expired_users.append(username)
-    
-    for username in expired_users:
-        del BLOCKED_USERS[username]
-
-def cleanup_forced_logout_sessions():
-    current_time = time.time()
-    expired_sessions = []
-    
-    for session_id in FORCED_LOGOUT_SESSIONS:
-        if session_id not in sessions:
-            expired_sessions.append(session_id)
-    
-    for session_id in expired_sessions:
-        FORCED_LOGOUT_SESSIONS.discard(session_id)
-
-def can_user_login(username):
-    if username not in USERS:
-        return False
-    
-    if not USERS[username].get("enabled", True):
-        return False
-    
-    cleanup_blocked_users()
-    
-    if username in BLOCKED_USERS:
-        if time.time() < BLOCKED_USERS[username]:
-            return False
-        else:
-            del BLOCKED_USERS[username]
-    
-    user_data = USERS[username]
-    if user_data["max_instances"] == 0:
-        return True
-    
-    return user_data["instances"] < user_data["max_instances"]
-
-def get_next_session_index(username):
-    active_indices = [s.get("session_index", 0) for s in sessions.values() if s.get("user") == username]
-    index = 1
-    while index in active_indices:
-        index += 1
-    return index
-
-def create_session(username):
+def create_session(user, alias=None):
+    import uuid
     session_id = str(uuid.uuid4())
-    index = get_next_session_index(username)
+    user_sessions = [s for s in sessions.values() if s["user"] == user]
+    max_index = max((s["session_index"] for s in user_sessions), default=0)
     sessions[session_id] = {
-        "authenticated": True,
-        "user": username,
-        "comfy_url": USERS[username]["comfy_url"],
+        "user": user,
+        "comfy_url": USERS[user]["comfy_url"],
         "created": time.time(),
-        "session_index": index
+        "session_index": max_index + 1,
+        "alias": alias or "",
+        "display_name": USERS[user].get("display_name", user)
     }
-    USERS[username]["instances"] += 1
-    record_session_start(username, session_id)
-    return session_id
-
-def create_admin_session():
-    session_id = str(uuid.uuid4())
-    admin_sessions[session_id] = {
-        "authenticated": True,
-        "created": time.time()
-    }
+    USERS[user]["instances"] += 1
+    save_config()
+    record_session_start(user, session_id)
+    if alias and user not in USER_FIRST_SESSION:
+        USER_FIRST_SESSION[user] = session_id
     return session_id
 
 def get_session(session_id):
     if not session_id:
         return None
-    
-    cleanup_sessions()
-    cleanup_forced_logout_sessions()
     return sessions.get(session_id)
 
-def get_admin_session(session_id):
-    if not session_id:
-        return None
-    
-    cleanup_admin_sessions()
-    return admin_sessions.get(session_id)
+def can_user_login(user):
+    if user in BLOCKED_USERS:
+        if BLOCKED_USERS[user] > time.time():
+            return False
+        del BLOCKED_USERS[user]
+    if user in LOCKED_USERS:
+        return False
+    user_data = USERS.get(user)
+    if not user_data:
+        return False
+    if not user_data.get("enabled", True):
+        return False
+    if user_data["instances"] >= user_data["max_instances"]:
+        return False
+    return True
 
 def is_authenticated(handler):
     session_id = handler.current_user
-    if not session_id:
-        # log.debug(f"Auth failed: current_user is None for {handler.request.uri}")
-        return False
-    
-    session_data = get_session(session_id)
-    if not session_data or not session_data.get("authenticated"):
-        log.warning(f"Auth failed: session {session_id} not found or not authenticated for {handler.request.uri}")
-        return False
-
-    return True
+    return session_id is not None and session_id in sessions
 
 def is_admin_authenticated(handler):
-    if not ADMIN_CONFIG["enabled"]:
-        return True
-    
-    session_id = handler.get_secure_cookie("admin_session_id")
-    if not session_id:
+    admin_session_id = handler.get_secure_cookie("admin_session_id")
+    if not admin_session_id:
         return False
-    
-    session_id_str = session_id.decode() if isinstance(session_id, bytes) else session_id
-    session_data = get_admin_session(session_id_str)
+    if isinstance(admin_session_id, bytes):
+        admin_session_id = admin_session_id.decode()
+    return admin_session_id in admin_sessions
 
-    is_auth = session_data and session_data["authenticated"]
-    if not is_auth:
-        log.warning(f"Admin auth failed for {handler.request.uri} from IP {handler.get_client_ip()}")
+def renumber_session_indices(username):
+    user_sessions = [(sid, sdata) for sid, sdata in sessions.items() if sdata["user"] == username]
+    user_sessions.sort(key=lambda x: x[1].get("created", 0))
+    for i, (sid, sdata) in enumerate(user_sessions, 1):
+        sdata["session_index"] = i
 
-    return is_auth
+def clear_user_first_session(session_id):
+    for user, sid in list(USER_FIRST_SESSION.items()):
+        if sid == session_id:
+            del USER_FIRST_SESSION[user]
+            return
+
+def is_handover_lock_available(session_data, session_id):
+    alias = session_data.get("alias", "")
+    if not alias:
+        return False
+    username = session_data["user"]
+    first_session_id = USER_FIRST_SESSION.get(username)
+    return first_session_id == session_id
+
+def create_admin_session():
+    import uuid
+    session_id = str(uuid.uuid4())
+    admin_sessions[session_id] = {"created": time.time()}
+    return session_id
+
+def cleanup_blocked_users():
+    current_time = time.time()
+    for username in list(BLOCKED_USERS.keys()):
+        if BLOCKED_USERS[username] <= current_time:
+            del BLOCKED_USERS[username]
 
 # === HANDLERE PENTRU INTERFAȚA PRINCIPALĂ ===
 class BaseHandler(tornado.web.RequestHandler):
@@ -878,8 +858,18 @@ class LoginHandler(BaseHandler):
                 )
                 return
                 
+            alias = self.get_argument("alias", "").strip()
+            if alias and alias not in ALIASES:
+                alias = ""
+            if alias and alias in ALIAS_LOCKS:
+                self.render("login.html",
+                    error=f'Alias "{alias}" is currently locked!',
+                    about_modal=ABOUT_DRAWER_HTML
+                )
+                return
+
             if can_user_login(user):
-                session_id = create_session(user)
+                session_id = create_session(user, alias=alias if alias else None)
                 self.set_secure_cookie("session_id", session_id, expires_days=1, path="/")
                 
                 # Dacă cererea vine de la un aggregator, trimitem și ID-ul brut pentru management la distanță
@@ -890,16 +880,19 @@ class LoginHandler(BaseHandler):
                 
                 log.info(f"User {user} logged in successfully from IP {client_ip}")
 
-                # Notify existing sessions
-                user_sessions = [sid for sid, sdata in sessions.items() if sdata["user"] == user and sid != session_id]
-                if user_sessions:
-                    for sid in user_sessions:
+                # Notify existing sessions of the same user
+                same_user_sessions = [sid for sid, sdata in sessions.items() if sdata["user"] == user and sid != session_id]
+                if same_user_sessions:
+                    for sid in same_user_sessions:
                         if sid in USER_CHAT_WEBSOCKETS:
                             for ws in USER_CHAT_WEBSOCKETS[sid]:
                                 try:
                                     ws.write_message(json.dumps({
-                                        "type": "system_notification",
-                                        "message": "Another session has been opened for this user."
+                                        "type": "concurrent_user",
+                                        "username": user,
+                                        "session_index": sessions[session_id].get('session_index', 1),
+                                        "alias": sessions[session_id].get("alias", ""),
+                                        "message": f"New session opened for {user}" + (f" as {sessions[session_id].get('alias', '')}" if sessions[session_id].get('alias') else f" #{sessions[session_id].get('session_index', 1)}")
                                     }))
                                 except: pass
 
@@ -913,11 +906,16 @@ class LoginHandler(BaseHandler):
                         self.render("forced_logout.html", about_modal=ABOUT_DRAWER_HTML)
                         return
                 
-                log.warning(f"User {user} tried to login but limit reached from IP {client_ip}")
+                is_locked = user in LOCKED_USERS
+                if is_locked:
+                    log.warning(f"User {user} tried to login but account is locked from IP {client_ip}")
+                else:
+                    log.warning(f"User {user} tried to login but limit reached from IP {client_ip}")
                 self.render("user_full.html",
                     username=user, 
                     max_instances=USERS[user]["max_instances"],
-                    about_modal=ABOUT_DRAWER_HTML
+                    about_modal=ABOUT_DRAWER_HTML,
+                    locked=is_locked
                 )
         else:
             RateLimiter.record_failed_attempt(client_ip)
@@ -945,7 +943,8 @@ class UserStatusHandler(BaseHandler):
                 "max_instances": user_data["max_instances"],
                 "ready": comfy_instances_ready.get(user_data["comfy_url"], False),
                 "enabled": user_data.get("enabled", True),
-                "nginx_auth": user_data.get("nginx_auth", {"enabled": False})
+                "nginx_auth": user_data.get("nginx_auth", {"enabled": False}),
+                "locked": username in LOCKED_USERS
             })
         
         # Filter active plugins in the last 60 seconds
@@ -1021,11 +1020,11 @@ class LogoutHandler(BaseHandler):
                     USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
 
                 record_session_end(session_id)
+                clear_user_first_session(session_id)
                 del sessions[session_id]
+                renumber_session_indices(username)
                 log.info(f"User {username} logged out")
         
-        # "Hard" logout: clear session cookie for the standard path
-        # Extra paths are handled by JavaScript in logout.html to ensure clean state
         self.clear_cookie("session_id", path="/")
         self.render("logout.html", about_modal=ABOUT_DRAWER_HTML)
 
@@ -1651,7 +1650,9 @@ class SessionCheckHandler(BaseHandler):
                 elif time_remaining <= 0:
                     if username in USERS:
                         USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
+                    clear_user_first_session(session_id)
                     del sessions[session_id]
+                    renumber_session_indices(username)
                     self.clear_cookie("session_id", path="/")
                     self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
                     return
@@ -1662,7 +1663,9 @@ class SessionCheckHandler(BaseHandler):
                 "user": username, 
                 "time_remaining": int(time_remaining) if user_timeout > 0 else None,
                 "session_index": session_data.get("session_index", 1),
-                "has_concurrent_sessions": len(concurrent_sessions) > 1
+                "alias": session_data.get("alias", ""),
+                "has_concurrent_sessions": len(concurrent_sessions) > 1,
+                "handover_lock_available": is_handover_lock_available(session_data, session_id)
             })
         else:
             self.write({"status": "not_authenticated"})
@@ -1690,6 +1693,122 @@ class SessionRefreshHandler(BaseHandler):
             self.write({"success": True, "message": "Session extended by 60 minutes"})
         else:
             self.write({"success": False, "error": "Session not found"})
+
+class AliasListHandler(BaseHandler):
+    def get(self):
+        self.write({"aliases": ALIASES})
+
+    def post(self):
+        session_id = self.current_user
+        if not session_id:
+            self.set_status(401)
+            self.write({"success": False, "error": "Not authenticated"})
+            return
+        try:
+            data = json.loads(self.request.body)
+            alias = data.get("alias", "").strip()
+            if not alias:
+                self.write({"success": False, "error": "Alias cannot be empty"})
+                return
+            if alias in ALIASES:
+                self.write({"success": False, "error": "Alias already exists"})
+                return
+            ALIASES.append(alias)
+            save_config()
+            self.write({"success": True, "aliases": ALIASES})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"success": False, "error": str(e)})
+
+    def delete(self):
+        session_id = self.current_user
+        if not session_id:
+            self.set_status(401)
+            self.write({"success": False, "error": "Not authenticated"})
+            return
+        try:
+            data = json.loads(self.request.body)
+            alias = data.get("alias", "").strip()
+            if alias in ALIASES:
+                ALIASES.remove(alias)
+                ALIAS_LOCKS.discard(alias)
+                save_config()
+            self.write({"success": True, "aliases": ALIASES})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"success": False, "error": str(e)})
+
+class SingleUserLockHandler(BaseHandler):
+    def get(self):
+        session_id = self.current_user
+        if not session_id:
+            self.write({"locked": False, "session_index": 0, "handover_lock_available": False})
+            return
+        session_data = get_session(session_id)
+        if not session_data:
+            self.write({"locked": False, "session_index": 0, "handover_lock_available": False})
+            return
+        username = session_data["user"]
+        alias = session_data.get("alias", "")
+        locked = alias in ALIAS_LOCKS if alias else username in LOCKED_USERS
+        self.write({
+            "locked": locked,
+            "session_index": session_data.get("session_index", 1),
+            "alias": alias,
+            "handover_lock_available": is_handover_lock_available(session_data, session_id)
+        })
+
+    def post(self):
+        session_id = self.current_user
+        if not session_id:
+            self.write({"success": False, "error": "Not authenticated"})
+            return
+        session_data = get_session(session_id)
+        if not session_data:
+            self.write({"success": False, "error": "Session not found"})
+            return
+
+        if not is_handover_lock_available(session_data, session_id):
+            self.write({"success": False, "error": "Lock is not available for this session"})
+            return
+
+        alias = session_data.get("alias", "")
+        if not alias:
+            self.write({"success": False, "error": "No alias assigned to this session"})
+            return
+
+        if alias in ALIAS_LOCKS:
+            ALIAS_LOCKS.discard(alias)
+            log.info(f"Alias {alias} unlocked")
+            self.write({"success": True, "locked": False, "alias": alias, "session_index": session_data.get("session_index", 1), "handover_lock_available": True, "message": "Alias unlocked"})
+        else:
+            ALIAS_LOCKS.add(alias)
+            # Terminate all other sessions of the same user (regardless of alias)
+            username = session_data["user"]
+            other_sessions = [sid for sid, sdata in sessions.items()
+                              if sdata["user"] == username and sid != session_id]
+            for sid in other_sessions:
+                if sid in USER_CHAT_WEBSOCKETS:
+                    for ws in list(USER_CHAT_WEBSOCKETS[sid]):
+                        try:
+                            ws.write_message(json.dumps({
+                                "type": "system_notification",
+                                "message": f"Session terminated because alias {alias} is now locked."
+                            }))
+                            ws.close()
+                        except:
+                            pass
+                if sid in sessions:
+                    user_of_sid = sessions[sid]["user"]
+                    clear_user_first_session(sid)
+                    del sessions[sid]
+                    if user_of_sid in USERS:
+                        USERS[user_of_sid]["instances"] = max(0, USERS[user_of_sid]["instances"] - 1)
+                    record_session_end(sid)
+                    renumber_session_indices(user_of_sid)
+
+            log.info(f"Alias {alias} locked, terminated {len(other_sessions)} other session(s)")
+            self.write({"success": True, "locked": True, "alias": alias, "session_index": session_data.get("session_index", 1), "handover_lock_available": True, "message": "Alias locked, other sessions terminated"})
 
 # === ADMIN AUTH HANDLERS - CORECTATE ===
 class AdminLoginHandler(BaseHandler):
@@ -1885,6 +2004,7 @@ class AdminSessionsHandler(BaseHandler):
             BLOCKED_USERS[username] = time.time() + 300
             record_session_end(session_id)
             del sessions[session_id]
+            renumber_session_indices(username)
             log.info(f"Admin forced logout for session {session_id}, user {username} blocked for 5 minutes")
         
         self.set_status(204)
@@ -2026,6 +2146,7 @@ class AdminUsersHandler(BaseHandler):
                         FORCED_LOGOUT_SESSIONS.add(session_id)
                 
                 for session_id in sessions_to_delete:
+                    clear_user_first_session(session_id)
                     del sessions[session_id]
             
             del USERS[username]
@@ -2201,8 +2322,9 @@ class AdminTerminateSessionHandler(BaseHandler):
 
                 # Log logout in usage stats
                 record_session_end(session_id)
-
+                clear_user_first_session(session_id)
                 del sessions[session_id]
+                renumber_session_indices(user)
                 save_config()
                 self.write({"success": True, "message": f"Session {session_id} was terminated"})
             else:
@@ -2778,7 +2900,9 @@ class MultiInstanceProxyHandler(BaseHandler):
                         if username in USERS:
                             USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
                         record_session_end(session_id_val)
+                        clear_user_first_session(session_id_val)
                         del sessions[session_id_val]
+                        renumber_session_indices(username)
                         self.clear_cookie("session_id", path="/")
                         self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
                         return
@@ -3004,7 +3128,8 @@ class MultiInstanceProxyHandler(BaseHandler):
                     # Inject our UI only into HTML (only on success)
                     if is_html and response.code == 200:
                         session_index = session_data.get("session_index", 1) if session_data else 1
-                        content = self._inject_ui(content, proxy_username, session_index)
+                        alias = session_data.get("alias", "") if session_data else ""
+                        content = self._inject_ui(content, proxy_username, session_index, alias)
                     
                     self.write(content.encode(encoding))
                 except Exception as e:
@@ -3027,7 +3152,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             self.set_status(502)
             self.write(f"Bad Gateway: {str(e)}")
     
-    def _inject_ui(self, html_content, username, session_index=1):
+    def _inject_ui(self, html_content, username, session_index=1, alias=""):
         """Injects UI into HTML responses"""
         try:
             # Elimină CSP-ul care ar putea bloca resursele noastre
@@ -3049,6 +3174,10 @@ class MultiInstanceProxyHandler(BaseHandler):
             
             if match:
                 head_end_pos = match.start()
+                escaped_about = ABOUT_DRAWER_HTML.replace('`', '\\`').replace('\n', ' ')
+                escaped_chat = CHAT_UI_HTML.replace('`', '\\`').replace('\n', ' ')
+                escaped_settings = USER_SETTINGS_MODAL_HTML.replace('`', '\\`').replace('\n', ' ')
+                escaped_session = SESSION_MODALS_HTML.replace('`', '\\`').replace('\n', ' ')
                 our_injection = f"""
                 <link rel="stylesheet" type="text/css" href="/static/css/styles.css">
                 <script src="/static/js/main.js"></script>
@@ -3147,6 +3276,21 @@ class MultiInstanceProxyHandler(BaseHandler):
                 .comfy-settings-btn:hover {{ background: #218838; }}
                 .comfy-logout-btn:hover {{ background: #c82333; }}
 
+                .comfy-lock-btn {{
+                    background: none;
+                    color: #aaa;
+                    border: none;
+                    cursor: pointer;
+                    font-size: 13px;
+                    padding: 0 4px;
+                    margin-left: 3px;
+                    line-height: 1;
+                    transition: all 0.2s;
+                }}
+                .comfy-lock-btn:hover {{ color: #ffc107; }}
+                .comfy-lock-btn.locked {{ color: #ffc107; }}
+                .comfy-lock-btn.locked:hover {{ color: #dc3545; }}
+
                 /* Hide native ComfyUI workflow buttons if they appear */
                 button[title*="Workflow"], .comfy-workflow-btn {{ display: none !important; }}
                 </style>
@@ -3161,7 +3305,9 @@ class MultiInstanceProxyHandler(BaseHandler):
                     
                     const userInfo = document.createElement('div');
                     userInfo.className = 'comfy-user-info';
-                    userInfo.innerHTML = `Welcome, {username} <span style="color: red; font-weight: bold; margin-left: 5px;">#{session_index}</span>`;
+                    var aliasDisplay = '{alias}';
+                    var displaySuffix = aliasDisplay ? ' <span style="color: red; font-weight: bold; margin-left: 5px;">' + aliasDisplay + '</span>' : ' <span style="color: red; font-weight: bold; margin-left: 5px;">#{session_index}</span>';
+                    userInfo.innerHTML = `Welcome, {username}` + displaySuffix + ` <button class="comfy-lock-btn" id="comfyLockBtn" onclick="toggleUserLock()" title="Lock this user - prevent other logins">&#128275;</button>`;
                     
                     const serverTitle = document.createElement('div');
                     serverTitle.className = 'server-title';
@@ -3175,10 +3321,10 @@ class MultiInstanceProxyHandler(BaseHandler):
                         <a href="/logout" class="comfy-logout-btn">Logout</a>
                     `;
                     
-                    document.body.insertAdjacentHTML('beforeend', `{ABOUT_DRAWER_HTML.replace('`', '\\`').replace('\n', ' ')}`);
-                    document.body.insertAdjacentHTML('beforeend', `{CHAT_UI_HTML.replace('`', '\\`').replace('\n', ' ')}`);
-                    document.body.insertAdjacentHTML('beforeend', `{USER_SETTINGS_MODAL_HTML.replace('`', '\\`').replace('\n', ' ')}`);
-                    document.body.insertAdjacentHTML('beforeend', `{SESSION_MODALS_HTML.replace('`', '\\`').replace('\n', ' ')}`);
+                    document.body.insertAdjacentHTML('beforeend', `{escaped_about}`);
+                    document.body.insertAdjacentHTML('beforeend', `{escaped_chat}`);
+                    document.body.insertAdjacentHTML('beforeend', `{escaped_settings}`);
+                    document.body.insertAdjacentHTML('beforeend', `{escaped_session}`);
 
                     document.body.appendChild(overlay);
                     document.body.appendChild(userInfo);
@@ -3284,7 +3430,7 @@ class MultiInstanceWebSocketProxy(WebSocketBaseHandler):
         if not session_data:
             self.close(code=4002, reason="Session not found")
             return
-        
+
         self.username = session_data["user"]
         
         comfy_ws_url = self.get_user_comfy_ws_url()
@@ -3577,6 +3723,8 @@ def make_auth_app():
         (r"/admin/api/terminate-session", AdminTerminateSessionHandler),
         (r"/check-session", SessionCheckHandler),
         (r"/refresh-session", SessionRefreshHandler),
+        (r"/single-user-lock", SingleUserLockHandler),
+        (r"/aliases", AliasListHandler),
         
         # Workflow routes
         (r"/api/workflows/list", WorkflowListHandler),

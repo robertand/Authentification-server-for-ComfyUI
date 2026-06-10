@@ -1,0 +1,9 @@
+{
+    "plugin_name": "ADA Multi-Server Aggregator",
+    "port": 8200,
+    "admin_port": 8201,
+    "servers": [],
+    "cookie_secret": "yGOcQX/y8NBAlSoFrkrcxWlm62oY/IErikYN4/5aric=",
+    "admin_password": "$2b$12$NE6WhXO/VabuJyjCcRYe7eKMrmcLpeXk5ryq5NhGVBn4hR9dq4SBa",
+    "backend_admin_password": "admin123"
+}

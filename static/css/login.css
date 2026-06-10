@@ -7,13 +7,16 @@ body {
 }
 .container {
     width: 95%;
-    max-width: 1200px;
+    max-width: 500px;
     margin: 0 auto; 
     background: #2a2a2a; 
     padding: 30px; 
     border-radius: 10px; 
     box-shadow: 0 0 10px rgba(0,0,0,0.5); 
-    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.4s ease;
+}
+.login-phase-password.container {
+    max-width: 420px;
 }
 .login-title {
     color: #007bff; 
@@ -29,12 +32,14 @@ body {
     margin-bottom: 25px; 
     letter-spacing: 2px;
 }
-input, button {
+.login-form-fields input,
+.login-form-fields button[type="submit"] {
     width: 80%; 
     padding: 12px; 
     margin: 8px; 
     font-size: 16px; 
     border-radius: 5px;
+    box-sizing: border-box;
 }
 input {
     border: 1px solid #444; 
