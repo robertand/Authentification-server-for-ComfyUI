@@ -422,15 +422,19 @@ def cleanup_old_chat_files():
             pass
 
 # === WORKFLOW FUNCTIONS ===
-def get_user_workflow_dir(username):
-    user_dir = os.path.join(WORKFLOW_ROOT_DIR, username)
+def get_user_workflow_dir(username, alias=None):
+    if alias:
+        user_dir = os.path.join(WORKFLOW_ROOT_DIR, username, alias)
+    else:
+        user_dir = os.path.join(WORKFLOW_ROOT_DIR, username)
+
     if not os.path.exists(user_dir):
         os.makedirs(user_dir, exist_ok=True)
-        log.info(f"Created workflow directory for user {username}: {user_dir}")
+        log.info(f"Created workflow directory for user {username} (alias: {alias}): {user_dir}")
     return user_dir
 
-def list_user_workflows(username):
-    user_dir = get_user_workflow_dir(username)
+def list_user_workflows(username, alias=None):
+    user_dir = get_user_workflow_dir(username, alias)
     workflows = []
     
     if os.path.exists(user_dir):
@@ -1045,13 +1049,14 @@ class WorkflowListHandler(BaseHandler):
         session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
+        alias = session_data.get("alias")
         
-        workflows = list_user_workflows(username)
+        workflows = list_user_workflows(username, alias)
         self.set_header("Content-Type", "application/json")
         self.write({
             "success": True,
             "workflows": workflows,
-            "user_directory": get_user_workflow_dir(username)
+            "user_directory": get_user_workflow_dir(username, alias)
         })
 
 class WorkflowLoadHandler(BaseHandler):
@@ -1064,8 +1069,9 @@ class WorkflowLoadHandler(BaseHandler):
         session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
+        alias = session_data.get("alias")
         
-        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username)), "")
+        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username, alias)), "")
         filepath = os.path.abspath(os.path.join(user_dir, filename))
 
         if not filepath.startswith(user_dir):
@@ -1103,6 +1109,7 @@ class WorkflowSaveHandler(BaseHandler):
         session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
+        alias = session_data.get("alias")
         
         data = json.loads(self.request.body)
         filename = data.get("filename", "").strip()
@@ -1116,7 +1123,7 @@ class WorkflowSaveHandler(BaseHandler):
         if not filename.endswith('.json'):
             filename += '.json'
         
-        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username)), "")
+        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username, alias)), "")
         filepath = os.path.abspath(os.path.join(user_dir, filename))
 
         if not filepath.startswith(user_dir):
@@ -1145,8 +1152,9 @@ class WorkflowDeleteHandler(BaseHandler):
         session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
+        alias = session_data.get("alias")
         
-        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username)), "")
+        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username, alias)), "")
         filepath = os.path.abspath(os.path.join(user_dir, filename))
 
         if not filepath.startswith(user_dir):
@@ -2780,6 +2788,31 @@ class MultiInstanceProxyHandler(BaseHandler):
         session_data = get_session(session_id)
         return session_data.get("comfy_url") if session_data else None
     
+    def _modify_prompt_for_alias(self, body, alias):
+        """Modifică prompt-ul pentru a include alias-ul în prefixul fișierelor de ieșire"""
+        try:
+            data = json.loads(body)
+            modified = False
+            if "prompt" in data:
+                for node_id, node_data in data["prompt"].items():
+                    if "inputs" in node_data:
+                        inputs = node_data["inputs"]
+                        # Prepend alias to common output prefix fields
+                        for field in ["filename_prefix", "prefix", "output_path"]:
+                            if field in inputs and isinstance(inputs[field], str):
+                                # Avoid double prepending
+                                if not inputs[field].startswith(f"{alias}/"):
+                                    inputs[field] = f"{alias}/{inputs[field]}"
+                                    modified = True
+
+            if modified:
+                log.info(f"Modified prompt to use alias subfolder: {alias}")
+                return json.dumps(data).encode('utf-8')
+            return body
+        except Exception as e:
+            log.error(f"Error modifying prompt for alias: {e}")
+            return body
+
     def _get_port_from_host(self):
         """Extrage portul din header-ul Host"""
         host = self.request.headers.get("Host", "")
@@ -3045,6 +3078,12 @@ class MultiInstanceProxyHandler(BaseHandler):
             body = None
             if method in ["POST", "PUT", "DELETE", "PATCH"] and self.request.body:
                 body = self.request.body
+
+                # Interceptare prompt pentru a injecta alias-ul în folderele de output
+                if method == "POST" and "prompt" in raw_path and session_data:
+                    alias = session_data.get("alias")
+                    if alias:
+                        body = self._modify_prompt_for_alias(body, alias)
             
             # Creează cererea
             req = tornado.httpclient.HTTPRequest(
@@ -3109,7 +3148,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             
             if (is_html or is_json) and response.body:
                 # Intercept prompt_id for usage monitoring
-                if is_json and "/prompt" in raw_path and method == "POST" and response.code == 200:
+                if is_json and "prompt" in raw_path and method == "POST" and response.code == 200:
                     try:
                         prompt_resp = json.loads(response.body)
                         prompt_id = prompt_resp.get("prompt_id")
