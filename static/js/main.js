@@ -59,7 +59,7 @@ function closeSessionExpiryModal() {
 }
 
 function redirectToLogin() {
-    window.location.href = '/login';
+    window.location.href = '/logout';
 }
 
 function logoutNow() {
@@ -254,13 +254,12 @@ function loadChatUsersList() {
                 const select = document.getElementById('chatRecipient');
                 const currentRecipient = select.value;
 
-                // Keep Admin, clear others
-                select.innerHTML = '<option value="admin">Administrator</option>';
+                select.innerHTML = '';
 
                 data.users.forEach(user => {
                     const option = document.createElement('option');
-                    option.value = user.username;
-                    option.textContent = user.username + (user.online ? ' (Online)' : '');
+                    option.value = user.is_session ? user.session_id : user.username;
+                    option.textContent = user.display_name + (user.online ? ' (Online)' : '');
                     select.appendChild(option);
                 });
 
@@ -307,7 +306,8 @@ function connectChatWebSocket() {
     chatWebSocket.onmessage = function(event) {
         const data = JSON.parse(event.data);
         if (data.type === 'new_message') {
-            addMessageToChat(data.message, data.from, data.timestamp, data.message_type, data.file_data);
+            const from_display = data.from_display || data.from;
+            addMessageToChat(data.message, from_display, data.timestamp, data.message_type, data.file_data);
             // Show notification if chat is closed
             if (document.getElementById('chatModal').style.display !== 'flex') {
                 hasUnreadMessages = true;
@@ -319,6 +319,10 @@ function connectChatWebSocket() {
             showTypingIndicator(data.username, data.typing);
         } else if (data.type === 'unread_count') {
             updateUnreadCount(data.count);
+        } else if (data.type === 'system_notification') {
+            showNotification(data.message, 'info');
+        } else if (data.type === 'concurrent_user') {
+            openConcurrentUserModal(data.username, data.session_index, data.alias);
         }
     };
     
@@ -336,7 +340,7 @@ function connectChatWebSocket() {
 function loadChatMessages() {
     const recipient = document.getElementById('chatRecipient').value;
     const usernameElement = document.querySelector('.comfy-user-info');
-    const myUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : '';
+    const myUsername = usernameElement ? usernameElement.textContent.replace(/Welcome, | #\d+/g, '') : '';
 
     fetch('/chat-messages', {
         method: 'GET',
@@ -350,16 +354,20 @@ function loadChatMessages() {
 
             data.messages.forEach(msg => {
                 // Filter messages: only show if I'm sender/receiver and the other person is the selected recipient
-                // Exception: if recipient is 'admin', show all messages with 'admin'
                 let show = false;
                 if (recipient === 'admin') {
                     if (msg.from === 'admin' || msg.to === 'admin') show = true;
                 } else {
-                    if ((msg.from === myUsername && msg.to === recipient) || (msg.from === recipient && msg.to === myUsername)) show = true;
+                    // Match by session_id (to_id/from_id) or username if it was an old style message
+                    if ((msg.from_id && (msg.from_id === recipient || msg.to === recipient)) ||
+                        (!msg.from_id && (msg.from === recipient || msg.to === recipient))) {
+                        show = true;
+                    }
                 }
 
                 if (show) {
-                    addMessageToChat(msg.message, msg.from, msg.timestamp, msg.message_type, msg.file_data, false);
+                    const from_display = msg.from_display || msg.from;
+                    addMessageToChat(msg.message, from_display, msg.timestamp, msg.message_type, msg.file_data, false);
                 }
             });
             scrollChatToBottom();
@@ -376,10 +384,11 @@ function loadChatMessages() {
 function addMessageToChat(message, from, timestamp, message_type = 'text', file_data = null, shouldScroll = true) {
     const chatMessages = document.getElementById('chatMessages');
     const usernameElement = document.querySelector('.comfy-user-info');
-    const myUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : '';
+    const myUsername = usernameElement ? usernameElement.textContent.replace(/Welcome, | #\d+/g, '') : '';
+    const cleanFrom = from.replace(/ #\d+/g, '');
 
     const messageDiv = document.createElement('div');
-    messageDiv.className = `chat-message ${from === myUsername ? 'user' : 'admin'}`;
+    messageDiv.className = `chat-message ${cleanFrom === myUsername ? 'user' : 'admin'}`;
     
     const time = new Date(timestamp * 1000).toLocaleTimeString();
     
@@ -413,7 +422,7 @@ function addMessageToChat(message, from, timestamp, message_type = 'text', file_
     
     const timeDiv = document.createElement('div');
     timeDiv.className = 'chat-message-time';
-    timeDiv.textContent = `${from === myUsername ? 'You' : from} • ${time}`;
+    timeDiv.textContent = `${cleanFrom === myUsername ? 'You ('+from+')' : from} • ${time}`;
     messageDiv.appendChild(timeDiv);
     
     // Add copy to clipboard functionality
@@ -479,7 +488,7 @@ function sendChatMessage() {
 function sendTextMessage(message) {
     const recipient = document.getElementById('chatRecipient').value;
     const usernameElement = document.querySelector('.comfy-user-info');
-    const myUsername = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : 'user';
+    const myDisplay = usernameElement ? usernameElement.textContent.replace('Welcome, ', '') : 'user';
 
     if (chatWebSocket && chatWebSocket.readyState === WebSocket.OPEN) {
         chatWebSocket.send(JSON.stringify({
@@ -489,7 +498,7 @@ function sendTextMessage(message) {
             message_type: 'text'
         }));
         // Add message immediately to chat for better UX
-        addMessageToChat(message, myUsername, Date.now() / 1000);
+        addMessageToChat(message, myDisplay, Date.now() / 1000);
         document.getElementById('chatInput').value = '';
         scrollChatToBottom();
         stopTyping();
@@ -709,6 +718,103 @@ function stopChatAutoRefresh() {
 }
 
 
+// User Lock Functions
+function toggleUserLock() {
+    fetch('/single-user-lock', {
+        method: 'POST',
+        credentials: 'include'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success === false) {
+            showNotification(data.error || 'Cannot toggle lock.', 'error');
+            return;
+        }
+        updateLockButton(data.locked, data.session_index, data.alias, data.handover_lock_available);
+        if (data.locked) {
+            showNotification('Account locked. Other users cannot login as you.', 'info');
+        } else {
+            showNotification('Account unlocked.', 'info');
+        }
+    })
+    .catch(error => {
+        console.log('Lock toggle error:', error);
+    });
+}
+
+function checkUserLockStatus() {
+    fetch('/single-user-lock', {
+        method: 'GET',
+        credentials: 'include'
+    })
+    .then(response => response.json())
+    .then(data => {
+        updateLockButton(data.locked, data.session_index, data.alias, data.handover_lock_available);
+        updateSessionIndexDisplay(data.session_index, data.alias);
+    })
+    .catch(error => {
+        console.log('Lock status error:', error);
+    });
+}
+
+function updateLockButton(locked, sessionIndex, alias, handoverLockAvailable) {
+    const btn = document.getElementById('comfyLockBtn');
+    if (!btn) return;
+    if (alias && handoverLockAvailable) {
+        btn.style.display = '';
+    } else {
+        btn.style.display = 'none';
+        return;
+    }
+    if (locked) {
+        btn.classList.add('locked');
+        btn.textContent = '\u{1F512}';
+        btn.title = 'Unlock this user - allow other logins';
+    } else {
+        btn.classList.remove('locked');
+        btn.textContent = '\u{1F513}';
+        btn.title = 'Lock this user - prevent other logins';
+    }
+}
+
+function updateSessionIndexDisplay(sessionIndex, alias) {
+    const userInfo = document.querySelector('.comfy-user-info');
+    if (!userInfo) return;
+    const span = userInfo.querySelector('span[style*="color: red"]');
+    if (!span) return;
+    if (alias) {
+        span.textContent = alias;
+    } else if (sessionIndex) {
+        span.textContent = '#' + sessionIndex;
+    }
+}
+
+// Concurrent User Modal Functions
+function openConcurrentUserModal(username, sessionIndex, alias) {
+    const modal = document.getElementById('concurrentUserModal');
+    const message = document.getElementById('concurrentUserMessage');
+    const info = document.getElementById('concurrentUserInfo');
+    if (username) {
+        message.textContent = `User ${username} has connected to the server.`;
+        if (alias) {
+            info.textContent = `${username} as ${alias}`;
+        } else if (sessionIndex) {
+            info.textContent = `${username} #${sessionIndex}`;
+        } else {
+            info.textContent = username;
+        }
+    } else {
+        message.textContent = 'Another user has connected to the server.';
+        info.textContent = '';
+    }
+    modal.style.display = 'block';
+    setTimeout(() => { modal.style.display = 'none'; }, 10000);
+}
+
+function closeConcurrentUserModal() {
+    document.getElementById('concurrentUserModal').style.display = 'none';
+}
+
 // Function to show notifications
 function showNotification(message, type = 'info') {
     const notification = document.createElement('div');
@@ -920,6 +1026,23 @@ function checkSessionStatus() {
             const chatButton = document.getElementById('chatButton');
             if (chatButton) {
                 chatButton.style.display = 'flex';
+                if (data.has_concurrent_sessions) {
+                    chatButton.classList.add('concurrent-session');
+                } else {
+                    chatButton.classList.remove('concurrent-session');
+                }
+            }
+            // Update lock button visibility and alias/index display
+            if (data.session_index) {
+                updateSessionIndexDisplay(data.session_index, data.alias);
+                const lockBtn = document.getElementById('comfyLockBtn');
+                if (lockBtn) {
+                    if (data.alias && data.handover_lock_available) {
+                        lockBtn.style.display = '';
+                    } else {
+                        lockBtn.style.display = 'none';
+                    }
+                }
             }
         }
     })
@@ -947,6 +1070,46 @@ function initSessionMonitoring() {
     
     // Initial check
     checkSessionStatus();
+    checkUserLockStatus();
+}
+
+// Make chat button draggable
+function makeChatButtonDraggable() {
+    const btn = document.getElementById('chatButton');
+    if (!btn) return;
+    let isDragging = false;
+    let dragOffsetX, dragOffsetY;
+    btn.addEventListener('mousedown', function(e) {
+        if (e.target !== btn && e.target.id !== 'chatButton') return;
+        isDragging = false;
+        const rect = btn.getBoundingClientRect();
+        dragOffsetX = e.clientX - rect.left;
+        dragOffsetY = e.clientY - rect.top;
+        function onMouseMove(e) {
+            isDragging = true;
+            btn.style.left = (e.clientX - dragOffsetX) + 'px';
+            btn.style.top = (e.clientY - dragOffsetY) + 'px';
+            btn.style.right = 'auto';
+            btn.style.bottom = 'auto';
+        }
+        function onMouseUp(e) {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            if (isDragging) {
+                e.stopPropagation();
+                e.preventDefault();
+            }
+        }
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    });
+    btn.addEventListener('click', function(e) {
+        if (isDragging) {
+            e.stopPropagation();
+            e.preventDefault();
+            isDragging = false;
+        }
+    });
 }
 
 // Start session monitoring when page loads
@@ -964,6 +1127,12 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Connect to chat WebSocket
     connectChatWebSocket();
+    
+    // Make chat button draggable
+    setTimeout(makeChatButtonDraggable, 2000);
+    
+    // Check lock status on page load
+    setTimeout(checkUserLockStatus, 1000);
 });
 
 // Also start when window loads (fallback)
@@ -972,7 +1141,470 @@ window.onload = function() {
     checkChatButtonVisibility();
 };
 
+setTimeout(dumpPiniaStores, 3000);
+
 // Function to autocomplete username when clicking on user status
 function autocompleteUsername(username) {
     document.querySelector('input[name="username"]').value = username;
+}
+
+// === WORKFLOW BROWSER (MODERN) ===
+var wfCurrentFolder = "";
+
+window.openWorkflowBrowser = function() {
+    var modal = document.getElementById('workflowBrowserModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    wfCurrentFolder = "";
+    loadWorkflowList();
+};
+function openWorkflowBrowser() { window.openWorkflowBrowser(); }
+
+function closeWorkflowBrowser() {
+    document.getElementById('workflowBrowserModal').style.display = 'none';
+    document.getElementById('workflowMessage').style.display = 'none';
+}
+
+function showWorkflowMessage(text, type) {
+    var msg = document.getElementById('workflowMessage');
+    msg.textContent = text;
+    msg.className = 'wf-message ' + type;
+    msg.style.display = 'block';
+    setTimeout(function() { msg.style.display = 'none'; }, 3000);
+}
+
+function escHtml(s) {
+    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function escJsStr(s) {
+    return (s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+function loadWorkflowList() {
+    fetch('/api/workflows/list', { credentials: 'include' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) return;
+            var tree = data.tree || [];
+            renderTree(tree, document.getElementById('wfTree'));
+            renderFileList(tree, wfCurrentFolder);
+            renderBreadcrumb(wfCurrentFolder);
+            document.getElementById('wfCurrentPath').textContent = '/' + wfCurrentFolder;
+        })
+        .catch(function(e) { console.log('Error loading workflows:', e); });
+}
+
+function renderTree(entries, parentEl, prefix) {
+    prefix = prefix || "";
+    parentEl.innerHTML = "";
+    
+    // Root entry
+    var rootItem = document.createElement('div');
+    rootItem.className = 'wf-tree-item' + (wfCurrentFolder === "" ? ' active' : '');
+    rootItem.innerHTML = '<span class="wf-tree-icon">📁</span><span class="wf-tree-label">Root</span>';
+    rootItem.onclick = function() { wfNavigate(""); };
+    parentEl.appendChild(rootItem);
+    
+    function addEntries(list, container, pathPrefix) {
+        for (var i = 0; i < list.length; i++) {
+            var entry = list[i];
+            if (entry.type === 'directory') {
+                var item = document.createElement('div');
+                item.className = 'wf-tree-item' + (wfCurrentFolder === entry.path ? ' active' : '');
+                item.innerHTML = '<span class="wf-tree-icon">📁</span><span class="wf-tree-label">' + escHtml(entry.name) + '</span>';
+                item.onclick = (function(p) { return function() { wfNavigate(p); }; })(entry.path);
+                container.appendChild(item);
+                
+                if (entry.children && entry.children.length > 0) {
+                    var childContainer = document.createElement('div');
+                    childContainer.className = 'wf-tree-children';
+                    container.appendChild(childContainer);
+                    addEntries(entry.children, childContainer, entry.path);
+                }
+            }
+        }
+    }
+    addEntries(entries, parentEl, "");
+}
+
+function renderBreadcrumb(path) {
+    var el = document.getElementById('wfBreadcrumb');
+    if (!el) return;
+    var parts = path ? path.split('/') : [];
+    var html = '<span onclick="wfNavigate(\'\')">Root</span>';
+    var cumulative = "";
+    for (var i = 0; i < parts.length; i++) {
+        html += '<span class="sep">/</span>';
+        cumulative += (i > 0 ? '/' : '') + parts[i];
+        html += '<span onclick="wfNavigate(\'' + escJsStr(cumulative) + '\')">' + escHtml(parts[i]) + '</span>';
+    }
+    el.innerHTML = html;
+}
+
+function renderFileList(tree, path) {
+    var list = document.getElementById('workflowList');
+    if (!list) return;
+    
+    // Navigate tree to find entries for current path
+    var entries = findInTree(tree, path);
+    if (!entries) {
+        list.innerHTML = '<div class="wf-empty">Folder not found</div>';
+        return;
+    }
+    // Filter out directories - show them as navigation items
+    var files = entries.filter(function(e) { return e.type === 'file'; });
+    var dirs = entries.filter(function(e) { return e.type === 'directory'; });
+    
+    if (dirs.length === 0 && files.length === 0) {
+        list.innerHTML = '<div class="wf-empty">Empty folder</div>';
+        return;
+    }
+    
+    list.innerHTML = "";
+    
+    // Show sub-folders first
+    for (var i = 0; i < dirs.length; i++) {
+        var d = dirs[i];
+        var item = document.createElement('div');
+        item.className = 'wf-file-item';
+        item.innerHTML =
+            '<span class="wf-file-icon">📁</span>' +
+            '<span class="wf-file-name">' + escHtml(d.name) + '</span>' +
+            '<span class="wf-file-date">folder</span>' +
+            '<div class="wf-file-actions">' +
+                '<button class="wf-file-btn load" onclick="wfNavigate(\'' + escJsStr(d.path) + '\')">Open</button>' +
+            '</div>';
+        list.appendChild(item);
+    }
+    
+    // Show files
+    for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        var d = new Date(f.modified * 1000);
+        var dateStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        var relPath = f.path;
+        var displayName = f.name;
+        
+        // If workflow name has .json extension, we can use full path
+        var loadPath = escJsStr(relPath);
+        
+        var item = document.createElement('div');
+        item.className = 'wf-file-item';
+        item.innerHTML =
+            '<span class="wf-file-icon">📄</span>' +
+            '<span class="wf-file-name">' + escHtml(displayName) + '</span>' +
+            '<span class="wf-file-date">' + dateStr + '</span>' +
+            '<div class="wf-file-actions">' +
+                '<button class="wf-file-btn load" onclick="injectWorkflow(\'' + loadPath + '\')">Load</button>' +
+                '<button class="wf-file-btn del" onclick="deleteWorkflow(\'' + loadPath + '\')">&#10005;</button>' +
+            '</div>';
+        list.appendChild(item);
+    }
+}
+
+function findInTree(tree, path) {
+    if (!path) return tree;
+    var parts = path.split('/');
+    var current = tree;
+    for (var i = 0; i < parts.length; i++) {
+        if (!current || !Array.isArray(current)) return null;
+        var found = null;
+        for (var j = 0; j < current.length; j++) {
+            if (current[j].type === 'directory' && current[j].name === parts[i]) {
+                found = current[j].children;
+                break;
+            }
+        }
+        if (!found) return null;
+        current = found;
+    }
+    return current;
+}
+
+function wfNavigate(path) {
+    wfCurrentFolder = path || "";
+    loadWorkflowList();
+}
+
+function wfNewFolder() {
+    var name = prompt('Enter folder name:');
+    if (!name || !name.trim()) return;
+    name = name.trim();
+    var fullPath = wfCurrentFolder ? wfCurrentFolder + '/' + name : name;
+    fetch('/api/workflows/mkdir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: fullPath }),
+        credentials: 'include'
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            showWorkflowMessage('Folder created', 'success');
+            loadWorkflowList();
+        } else {
+            showWorkflowMessage(data.error || 'Failed to create folder', 'error');
+        }
+    })
+    .catch(function(e) {
+        showWorkflowMessage('Error: ' + e.message, 'error');
+    });
+}
+
+function saveCurrentWorkflow() {
+    var name = document.getElementById('workflowSaveName').value.trim();
+    if (!name) { showWorkflowMessage('Enter a workflow name', 'error'); return; }
+    
+    // Prepend current folder path if we're not in root
+    var fullName = wfCurrentFolder ? wfCurrentFolder + '/' + name : name;
+    if (!fullName.endsWith('.json')) fullName += '.json';
+
+    try {
+        if (typeof window.app !== 'undefined' && window.app.graphToPromise) {
+            window.app.graphToPromise().then(function(apiJson) {
+                var promptData = apiJson.output || apiJson;
+                var workflowData = promptData.workflow || promptData;
+                if (!workflowData || Object.keys(workflowData).length === 0) {
+                    showWorkflowMessage('Could not extract workflow data', 'error');
+                    return;
+                }
+                injectWorkflowName(workflowData, fullName);
+                sendSaveWorkflow(fullName, workflowData);
+            }).catch(function(e) {
+                sendSaveFallback(fullName);
+            });
+        } else if (typeof window.app !== 'undefined' && window.app.graphToPrompt) {
+            var result = window.app.graphToPrompt();
+            if (result && result.workflow) {
+                var wf = result.workflow;
+                injectWorkflowName(wf, fullName);
+                sendSaveWorkflow(fullName, wf);
+            } else if (result && result.output) {
+                var out = result.output;
+                injectWorkflowName(out, fullName);
+                sendSaveWorkflow(fullName, out);
+            } else {
+                sendSaveFallback(fullName);
+            }
+        } else {
+            sendSaveFallback(fullName);
+        }
+    } catch(e) {
+        console.log('Error extracting workflow:', e);
+        sendSaveFallback(fullName);
+    }
+}
+
+function injectWorkflowName(wf, name) {
+    var cleanName = name.replace(/\.json$/i, '').split('/').pop();
+    if (wf.extra) {
+        wf.extra.workflow = wf.extra.workflow || {};
+        wf.extra.workflow.name = cleanName;
+    } else {
+        wf.extra = { workflow: { name: cleanName } };
+    }
+}
+
+function sendSaveWorkflow(name, workflowData) {
+    fetch('/api/workflows/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: name, workflow: workflowData }),
+        credentials: 'include'
+    })
+    .then(function(r) {
+        if (!r.ok) console.log('Save response status:', r.status);
+        return r.text().then(function(text) {
+            try { return JSON.parse(text); }
+            catch(e) { throw new Error('Server returned HTML (status ' + r.status + '): ' + text.substring(0, 100)); }
+        });
+    })
+    .then(function(data) {
+        if (data.success) {
+            showWorkflowMessage('Workflow saved successfully', 'success');
+            document.getElementById('workflowSaveName').value = '';
+            loadWorkflowList();
+        } else {
+            showWorkflowMessage(data.error || 'Save failed', 'error');
+        }
+    })
+    .catch(function(e) {
+        showWorkflowMessage('Error: ' + e.message, 'error');
+    });
+}
+
+function sendSaveFallback(name) {
+    var fallbackData = { nodes: [], links: [] };
+    try {
+        if (window.app && window.app.graph) {
+            var ser = window.app.graph.serialize();
+            if (ser && ser.nodes) fallbackData = ser;
+        }
+    } catch(e) {}
+    sendSaveWorkflow(name, fallbackData);
+}
+
+function getExistingTabNames() {
+    var names = [];
+    try {
+        document.querySelectorAll('[class*="tab"]:not([class*="workflow-"]) .tab-label, [role="tab"] span, .p-tabview-title, .tab-name').forEach(function(el) {
+            var t = (el.textContent || '').trim();
+            if (t && t !== '+' && t !== '×') names.push(t);
+        });
+    } catch(e) {}
+    return names;
+}
+
+function getUniqueTabName(baseName) {
+    var cleanName = baseName.replace(/\.json$/i, '');
+    var existing = getExistingTabNames();
+    if (existing.indexOf(cleanName) === -1) return cleanName;
+    var counter = 1;
+    while (existing.indexOf(cleanName + ' (' + counter + ')') !== -1) counter++;
+    return cleanName + ' (' + counter + ')';
+}
+
+function getVueApp() {
+    var el = document.getElementById('vue-app') || document.querySelector('#vue-app');
+    if (el && el.__vue_app__) return el.__vue_app__;
+    var found = document.querySelector('[__vue_app__]');
+    if (found) return found.__vue_app__;
+    var all = document.querySelectorAll('body *');
+    for (var ai = 0; ai < all.length; ai++) {
+        if (all[ai].__vue_app__) return all[ai].__vue_app__;
+    }
+    return null;
+}
+
+function getPinia() {
+    var app = getVueApp();
+    return app && app.config && app.config.globalProperties && app.config.globalProperties.$pinia;
+}
+
+function getWorkflowStore() {
+    var pinia = getPinia();
+    if (!pinia) return null;
+    for (var key in pinia._s) {
+        var store = pinia._s[key];
+        if (store.activeWorkflow) return store;
+    }
+    return null;
+}
+
+function renameActiveWorkflow(newName) {
+    try {
+        if (window.app && window.app.graph) {
+            window.app.graph.extra = window.app.graph.extra || {};
+            window.app.graph.extra.workflow = window.app.graph.extra.workflow || {};
+            window.app.graph.extra.workflow.name = newName;
+        }
+        var store = getWorkflowStore();
+        if (!store) { console.log('workflowStore not found'); return false; }
+        var wf = store.activeWorkflow;
+        if (!wf) { console.log('activeWorkflow not found'); return false; }
+        if (wf.rename && typeof wf.rename === 'function') {
+            wf.rename(newName);
+            console.log('workflow.rename() called with:', newName);
+        }
+        wf.name = newName;
+        wf.filename = newName;
+        return true;
+    } catch(e) { console.log('renameActiveWorkflow error:', e); return false; }
+}
+
+function dumpPiniaStores() {
+    try {
+        var pinia = getPinia();
+        if (!pinia) { console.log('Pinia not found'); return; }
+        for (var key in pinia._s) {
+            var store = pinia._s[key];
+            var props = [];
+            for (var p in store) {
+                if (p.startsWith('$') || typeof store[p] === 'function') continue;
+                var val = store[p];
+                if (typeof val === 'string') props.push(p + '="' + val + '"');
+                else if (typeof val === 'number' || typeof val === 'boolean') props.push(p + '=' + val);
+                else if (Array.isArray(val)) props.push(p + '[]=' + val.length);
+                else if (val && typeof val === 'object') props.push(p + '{}');
+                else props.push(p + ': ' + typeof val);
+            }
+            if (store.activeWorkflow && store.activeWorkflow.filename) {
+                props.push('activeWorkflow.filename="' + store.activeWorkflow.filename + '"');
+                props.push('activeWorkflow.name="' + (store.activeWorkflow.name || '') + '"');
+            }
+            console.log('Pinia store [' + key + ']:', props.join(', '));
+        }
+    } catch(e) { console.log('dump error:', e); }
+}
+
+function forceSetTabName(name) {
+    if (!name) return;
+    var cleanName = name.replace(/\.json$/i, '');
+    document.title = cleanName + ' | ComfyUI';
+    try {
+        // Set in graph data
+        if (window.app && window.app.graph) {
+            window.app.graph.extra = window.app.graph.extra || {};
+            window.app.graph.extra.workflow = window.app.graph.extra.workflow || {};
+            window.app.graph.extra.workflow.name = cleanName;
+        }
+        
+        // Try to rename via Pinia store
+        renameActiveWorkflow(cleanName);
+        
+        // DOM manipulation as fallback
+        document.querySelectorAll('[class*="tab"] .tab-label, [role="tab"] span, .p-tabview-title').forEach(function(el) {
+            var txt = el.textContent.trim();
+            if (txt === 'Unsaved Workflow' || txt === 'Workflow' || txt.indexOf('Unsaved') === 0) {
+                el.textContent = cleanName;
+            }
+        });
+    } catch(e) { console.log('setTabName error:', e); }
+}
+
+function injectWorkflow(filename) {
+    fetch('/api/workflows/load/' + encodeURIComponent(filename), { credentials: 'include' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.success) { showWorkflowMessage(data.error || 'Load failed', 'error'); return; }
+            var wf = data.workflow;
+            var baseName = filename.split('/').pop().replace(/\.json$/i, '');
+            if (typeof window.app === 'undefined') { showWorkflowMessage('ComfyUI not available', 'error'); return; }
+
+            if (wf.extra) { wf.extra.workflow = wf.extra.workflow || {}; wf.extra.workflow.name = baseName; }
+            else { wf.extra = { workflow: { name: baseName } }; }
+
+            closeWorkflowBrowser();
+            console.log('Loading workflow:', baseName);
+
+            try {
+                if (window.app.loadGraphData) {
+                    window.app.loadGraphData(wf, true, true, baseName);
+                } else if (window.app.loadApiJson) {
+                    window.app.loadApiJson(wf, baseName);
+                }
+                setTimeout(function() { forceSetTabName(baseName); }, 1000);
+            } catch(e) { console.log('Inject error:', e); showNotification('Error loading workflow', 'error'); }
+        })
+        .catch(function(e) { showWorkflowMessage('Error: ' + e.message, 'error'); });
+}
+
+function deleteWorkflow(filename) {
+    if (!confirm('Delete ' + filename + '?')) return;
+    fetch('/api/workflows/delete/' + encodeURIComponent(filename), {
+        method: 'DELETE',
+        credentials: 'include'
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            loadWorkflowList();
+        } else {
+            showWorkflowMessage(data.error || 'Delete failed', 'error');
+        }
+    })
+    .catch(function(e) {
+        showWorkflowMessage('Network error: ' + e, 'error');
+    });
 }
