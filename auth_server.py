@@ -127,6 +127,53 @@ SESSION_MODALS_HTML = """
         </div>
     </div>
 </div>
+
+<div id="concurrentUserModal" class="concurrent-user-modal">
+    <div class="concurrent-user-modal-content">
+        <h2>New User Connected</h2>
+        <div class="concurrent-user-icon">&#128100;</div>
+        <p id="concurrentUserMessage">Another user has connected to the server.</p>
+        <div class="concurrent-user-info" id="concurrentUserInfo"></div>
+        <button class="concurrent-user-btn" onclick="closeConcurrentUserModal()">OK</button>
+    </div>
+</div>
+"""
+
+WORKFLOW_BROWSER_HTML = """
+<div id="workflowBrowserModal" class="wf-modal">
+    <div class="wf-modal-content">
+        <div class="wf-header">
+            <h2><span class="wf-icon">📂</span> Workflow Manager</h2>
+            <button class="wf-close-btn" onclick="closeWorkflowBrowser()">&times;</button>
+        </div>
+        <div class="wf-layout">
+            <div class="wf-sidebar">
+                <div class="wf-sidebar-header">
+                    <span>Folders</span>
+                    <button class="wf-sidebar-btn" onclick="wfNewFolder()" title="New Folder">+</button>
+                </div>
+                <div class="wf-tree" id="wfTree"></div>
+            </div>
+            <div class="wf-main">
+                <div class="wf-breadcrumb" id="wfBreadcrumb"></div>
+                <div class="wf-toolbar">
+                    <span class="wf-current-path" id="wfCurrentPath">/</span>
+                    <button class="wf-refresh-btn" onclick="loadWorkflowList()">&#x21bb;</button>
+                </div>
+                <div class="wf-list" id="workflowList">
+                    <div class="wf-empty">No saved workflows</div>
+                </div>
+                <div class="wf-save-section">
+                    <div class="wf-save-row">
+                        <input type="text" id="workflowSaveName" placeholder="Workflow name..." class="wf-input">
+                        <button class="wf-btn wf-btn-primary" onclick="saveCurrentWorkflow()">Save</button>
+                    </div>
+                    <div id="workflowMessage" class="wf-message"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 """
 
 # === CONFIGURARE ===
@@ -205,7 +252,7 @@ CHAT_FILES_DIR = "chat_files"
 LAST_PLUGIN_ACTIVITY = {}
 
 # === WORKFLOW BROWSER ===
-WORKFLOW_ROOT_DIR = "/mnt/prouser/spatiu/ComfyUI/workflows"
+WORKFLOW_ROOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workflows")
 
 # === USAGE TRACKING ===
 USAGE_STATS_FILE = "comfyui_usage_stats.json"
@@ -273,6 +320,28 @@ def record_session_end(session_id):
         save_usage_stats()
         log.info(f"Session ended for {sess['user']} (Duration: {sess['duration']:.2f}s)")
 
+def migrate_user_stats(old_username, new_username):
+    """Migrate all usage statistics from old_username to new_username when a user is renamed."""
+    count = 0
+    for job in USAGE_STATS["history"]:
+        if job.get("user") == old_username:
+            job["user"] = new_username
+            count += 1
+    for sess in USAGE_STATS["session_history"]:
+        if sess.get("user") == old_username:
+            sess["user"] = new_username
+            count += 1
+    for job in USAGE_STATS["active_jobs"].values():
+        if job.get("user") == old_username:
+            job["user"] = new_username
+            count += 1
+    for sess in USAGE_STATS["active_sessions"].values():
+        if sess.get("user") == old_username:
+            sess["user"] = new_username
+            count += 1
+    save_usage_stats()
+    log.info(f"Migrated {count} stats entries from '{old_username}' to '{new_username}'")
+
 # Create chat files directory if it doesn't exist
 if not os.path.exists(CHAT_FILES_DIR):
     os.makedirs(CHAT_FILES_DIR, exist_ok=True)
@@ -286,6 +355,9 @@ DEFAULT_SESSION_TIMEOUT = 3600
 EXTERNAL_INSTANCES = {}
 BLOCKED_USERS = {}
 FORCED_LOGOUT_SESSIONS = set()
+LOCKED_USERS = set()
+ALIASES = []
+USER_FIRST_SESSION = {}
 
 comfy_instances_ready = {}
 
@@ -409,32 +481,52 @@ def cleanup_old_chat_files():
             pass
 
 # === WORKFLOW FUNCTIONS ===
-def get_user_workflow_dir(username):
-    user_dir = os.path.join(WORKFLOW_ROOT_DIR, username)
+def get_user_workflow_dir(username, alias=None):
+    if alias:
+        user_dir = os.path.join(WORKFLOW_ROOT_DIR, username, alias)
+    else:
+        user_dir = os.path.join(WORKFLOW_ROOT_DIR, username)
+
     if not os.path.exists(user_dir):
         os.makedirs(user_dir, exist_ok=True)
-        log.info(f"Created workflow directory for user {username}: {user_dir}")
+        log.info(f"Created workflow directory for user {username} (alias: {alias}): {user_dir}")
     return user_dir
 
-def list_user_workflows(username):
-    user_dir = get_user_workflow_dir(username)
-    workflows = []
-    
-    if os.path.exists(user_dir):
-        for filename in os.listdir(user_dir):
-            if filename.endswith('.json'):
-                filepath = os.path.join(user_dir, filename)
-                if os.path.isfile(filepath):
-                    stats = os.stat(filepath)
-                    workflows.append({
-                        'name': filename,
-                        'path': filepath,
-                        'modified': stats.st_mtime,
-                        'size': stats.st_size
-                    })
-    
-    workflows.sort(key=lambda x: x['modified'], reverse=True)
-    return workflows
+def scan_workflow_dir(user_dir, prefix=""):
+    entries = []
+    if not os.path.exists(user_dir):
+        return entries
+    try:
+        for name in sorted(os.listdir(user_dir), key=lambda x: (not os.path.isdir(os.path.join(user_dir, x)), x.lower())):
+            full = os.path.join(user_dir, name)
+            rel = (prefix + "/" + name) if prefix else name
+            if os.path.isdir(full):
+                children = scan_workflow_dir(full, rel)
+                entries.append({
+                    "type": "directory",
+                    "name": name,
+                    "path": rel,
+                    "children": children
+                })
+            elif name.endswith('.json') and os.path.isfile(full):
+                stats = os.stat(full)
+                entries.append({
+                    "type": "file",
+                    "name": name,
+                    "path": rel,
+                    "modified": stats.st_mtime,
+                    "size": stats.st_size
+                })
+    except Exception as e:
+        log.error(f"Error scanning {user_dir}: {e}")
+    return entries
+
+def list_user_workflows(username, alias=None):
+    user_dir = get_user_workflow_dir(username, alias)
+    return {
+        "root": scan_workflow_dir(user_dir),
+        "user_directory": user_dir
+    }
 
 # Încarcă configurația din fișier sau folosește cea implicită
 def load_config():
@@ -480,6 +572,10 @@ def load_config():
     AUTH_PORT = config.get("auth_port", 7861)
     ADMIN_PORT = config.get("admin_port", 8199)
 
+    if "aliases" in config:
+        global ALIASES
+        ALIASES = config["aliases"]
+
     return config
 
 def save_config():
@@ -491,7 +587,8 @@ def save_config():
             "admin": ADMIN_CONFIG,
             "workflow_root": WORKFLOW_ROOT_DIR,
             "global_nginx_auth": GLOBAL_NGINX_AUTH,
-            "cookie_secret": config.get("cookie_secret")
+            "cookie_secret": config.get("cookie_secret"),
+            "aliases": ALIASES
         }
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
@@ -506,8 +603,12 @@ def cleanup_stuck_sessions():
         USERS[username]["instances"] = 0
     
     sessions.clear()
+    USER_FIRST_SESSION.clear()
     FORCED_LOGOUT_SESSIONS.clear()
     BLOCKED_USERS.clear()
+    LOCKED_USERS.clear()
+    if 'ALIAS_LOCKS' in globals():
+        ALIAS_LOCKS.clear()
     
     log.info("✓ Cleaned up stuck sessions and reset instance counts")
 
@@ -616,127 +717,97 @@ def cleanup_sessions():
                     USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
     
     for session_id in expired_sessions:
+        username = sessions[session_id]["user"]
         record_session_end(session_id)
+        clear_user_first_session(session_id)
         del sessions[session_id]
+        renumber_session_indices(username)
 
-def cleanup_admin_sessions():
-    current_time = time.time()
-    expired_sessions = []
-    
-    for session_id, session_data in admin_sessions.items():
-        if current_time - session_data["created"] > DEFAULT_SESSION_TIMEOUT:
-            expired_sessions.append(session_id)
-    
-    for session_id in expired_sessions:
-        del admin_sessions[session_id]
-
-def cleanup_blocked_users():
-    current_time = time.time()
-    expired_users = []
-    
-    for username, expiry_time in BLOCKED_USERS.items():
-        if current_time > expiry_time:
-            expired_users.append(username)
-    
-    for username in expired_users:
-        del BLOCKED_USERS[username]
-
-def cleanup_forced_logout_sessions():
-    current_time = time.time()
-    expired_sessions = []
-    
-    for session_id in FORCED_LOGOUT_SESSIONS:
-        if session_id not in sessions:
-            expired_sessions.append(session_id)
-    
-    for session_id in expired_sessions:
-        FORCED_LOGOUT_SESSIONS.discard(session_id)
-
-def can_user_login(username):
-    if username not in USERS:
-        return False
-    
-    if not USERS[username].get("enabled", True):
-        return False
-    
-    cleanup_blocked_users()
-    
-    if username in BLOCKED_USERS:
-        if time.time() < BLOCKED_USERS[username]:
-            return False
-        else:
-            del BLOCKED_USERS[username]
-    
-    user_data = USERS[username]
-    if user_data["max_instances"] == 0:
-        return True
-    
-    return user_data["instances"] < user_data["max_instances"]
-
-def create_session(username):
+def create_session(user, alias=None):
+    import uuid
     session_id = str(uuid.uuid4())
+    user_sessions = [s for s in sessions.values() if s["user"] == user]
+    max_index = max((s["session_index"] for s in user_sessions), default=0)
     sessions[session_id] = {
-        "authenticated": True,
-        "user": username,
-        "comfy_url": USERS[username]["comfy_url"],
-        "created": time.time()
+        "user": user,
+        "comfy_url": USERS[user]["comfy_url"],
+        "created": time.time(),
+        "session_index": max_index + 1,
+        "alias": alias or "",
+        "display_name": USERS[user].get("display_name", user)
     }
-    USERS[username]["instances"] += 1
-    record_session_start(username, session_id)
-    return session_id
-
-def create_admin_session():
-    session_id = str(uuid.uuid4())
-    admin_sessions[session_id] = {
-        "authenticated": True,
-        "created": time.time()
-    }
+    USERS[user]["instances"] += 1
+    save_config()
+    record_session_start(user, session_id)
+    if alias and user not in USER_FIRST_SESSION:
+        USER_FIRST_SESSION[user] = session_id
     return session_id
 
 def get_session(session_id):
     if not session_id:
         return None
-    
-    cleanup_sessions()
-    cleanup_forced_logout_sessions()
     return sessions.get(session_id)
 
-def get_admin_session(session_id):
-    if not session_id:
-        return None
-    
-    cleanup_admin_sessions()
-    return admin_sessions.get(session_id)
+def can_user_login(user):
+    if user in BLOCKED_USERS:
+        if BLOCKED_USERS[user] > time.time():
+            return False
+        del BLOCKED_USERS[user]
+    if user in LOCKED_USERS:
+        return False
+    user_data = USERS.get(user)
+    if not user_data:
+        return False
+    if not user_data.get("enabled", True):
+        return False
+    if user_data["instances"] >= user_data["max_instances"]:
+        return False
+    return True
 
 def is_authenticated(handler):
     session_id = handler.current_user
-    if not session_id:
-        # log.debug(f"Auth failed: current_user is None for {handler.request.uri}")
-        return False
-    
-    session_data = get_session(session_id)
-    if not session_data or not session_data.get("authenticated"):
-        log.warning(f"Auth failed: session {session_id} not found or not authenticated for {handler.request.uri}")
-        return False
-
-    return True
+    return session_id is not None and session_id in sessions
 
 def is_admin_authenticated(handler):
-    if not ADMIN_CONFIG["enabled"]:
-        return True
-    
-    session_id = handler.get_secure_cookie("admin_session_id")
-    if not session_id:
+    admin_session_id = handler.get_secure_cookie("admin_session_id")
+    if not admin_session_id:
         return False
-    
-    session_id_str = session_id.decode() if isinstance(session_id, bytes) else session_id
-    session_data = get_admin_session(session_id_str)
+    if isinstance(admin_session_id, bytes):
+        admin_session_id = admin_session_id.decode()
+    return admin_session_id in admin_sessions
 
-    is_auth = session_data and session_data["authenticated"]
-    if not is_auth:
-        log.warning(f"Admin auth failed for {handler.request.uri} from IP {handler.get_client_ip()}")
+def renumber_session_indices(username):
+    user_sessions = [(sid, sdata) for sid, sdata in sessions.items() if sdata["user"] == username]
+    user_sessions.sort(key=lambda x: x[1].get("created", 0))
+    for i, (sid, sdata) in enumerate(user_sessions, 1):
+        sdata["session_index"] = i
 
-    return is_auth
+def clear_user_first_session(session_id):
+    for user, sid in list(USER_FIRST_SESSION.items()):
+        if sid == session_id:
+            del USER_FIRST_SESSION[user]
+            LOCKED_USERS.discard(user)
+            return
+
+def is_handover_lock_available(session_data, session_id):
+    alias = session_data.get("alias", "")
+    if not alias:
+        return False
+    username = session_data["user"]
+    first_session_id = USER_FIRST_SESSION.get(username)
+    return first_session_id == session_id
+
+def create_admin_session():
+    import uuid
+    session_id = str(uuid.uuid4())
+    admin_sessions[session_id] = {"created": time.time()}
+    return session_id
+
+def cleanup_blocked_users():
+    current_time = time.time()
+    for username in list(BLOCKED_USERS.keys()):
+        if BLOCKED_USERS[username] <= current_time:
+            del BLOCKED_USERS[username]
 
 # === HANDLERE PENTRU INTERFAȚA PRINCIPALĂ ===
 class BaseHandler(tornado.web.RequestHandler):
@@ -818,6 +889,13 @@ class BaseHandler(tornado.web.RequestHandler):
 
 class LoginHandler(BaseHandler):
     def get(self):
+        session_id = self.current_user
+        if session_id and session_id in FORCED_LOGOUT_SESSIONS:
+            FORCED_LOGOUT_SESSIONS.discard(session_id)
+            self.clear_cookie("session_id", path="/")
+            self.redirect("/login")
+            return
+
         if is_authenticated(self):
             self.redirect("/")
             return
@@ -869,8 +947,12 @@ class LoginHandler(BaseHandler):
                 )
                 return
                 
+            alias = self.get_argument("alias", "").strip()
+            if alias and alias not in ALIASES:
+                alias = ""
+
             if can_user_login(user):
-                session_id = create_session(user)
+                session_id = create_session(user, alias=alias if alias else None)
                 self.set_secure_cookie("session_id", session_id, expires_days=1, path="/")
                 
                 # Dacă cererea vine de la un aggregator, trimitem și ID-ul brut pentru management la distanță
@@ -880,6 +962,23 @@ class LoginHandler(BaseHandler):
                 RateLimiter.clear_attempts(client_ip)
                 
                 log.info(f"User {user} logged in successfully from IP {client_ip}")
+
+                # Notify existing sessions of the same user
+                same_user_sessions = [sid for sid, sdata in sessions.items() if sdata["user"] == user and sid != session_id]
+                if same_user_sessions:
+                    for sid in same_user_sessions:
+                        if sid in USER_CHAT_WEBSOCKETS:
+                            for ws in USER_CHAT_WEBSOCKETS[sid]:
+                                try:
+                                    ws.write_message(json.dumps({
+                                        "type": "concurrent_user",
+                                        "username": user,
+                                        "session_index": sessions[session_id].get('session_index', 1),
+                                        "alias": sessions[session_id].get("alias", ""),
+                                        "message": f"New session opened for {user}" + (f" as {sessions[session_id].get('alias', '')}" if sessions[session_id].get('alias') else f" #{sessions[session_id].get('session_index', 1)}")
+                                    }))
+                                except: pass
+
                 self.redirect("/comfy/")
             else:
                 if user in BLOCKED_USERS:
@@ -890,11 +989,16 @@ class LoginHandler(BaseHandler):
                         self.render("forced_logout.html", about_modal=ABOUT_DRAWER_HTML)
                         return
                 
-                log.warning(f"User {user} tried to login but limit reached from IP {client_ip}")
+                is_locked = user in LOCKED_USERS
+                if is_locked:
+                    log.warning(f"User {user} tried to login but account is locked from IP {client_ip}")
+                else:
+                    log.warning(f"User {user} tried to login but limit reached from IP {client_ip}")
                 self.render("user_full.html",
                     username=user, 
                     max_instances=USERS[user]["max_instances"],
-                    about_modal=ABOUT_DRAWER_HTML
+                    about_modal=ABOUT_DRAWER_HTML,
+                    locked=is_locked
                 )
         else:
             RateLimiter.record_failed_attempt(client_ip)
@@ -912,6 +1016,17 @@ class UserStatusHandler(BaseHandler):
             LAST_PLUGIN_ACTIVITY[plugin_name] = time.time()
             log.info(f"Activity detected from Plugin Server: {plugin_name}")
 
+        # Colectează alias-urile active per utilizator
+        active_aliases_per_user = {}
+        for s in sessions.values():
+            user = s["user"]
+            alias = s.get("alias", "")
+            if alias:
+                if user not in active_aliases_per_user:
+                    active_aliases_per_user[user] = []
+                if alias not in active_aliases_per_user[user]:
+                    active_aliases_per_user[user].append(alias)
+
         user_status = []
         sorted_users = sorted(USERS.items(), key=lambda x: x[0].lower())
         
@@ -922,7 +1037,9 @@ class UserStatusHandler(BaseHandler):
                 "max_instances": user_data["max_instances"],
                 "ready": comfy_instances_ready.get(user_data["comfy_url"], False),
                 "enabled": user_data.get("enabled", True),
-                "nginx_auth": user_data.get("nginx_auth", {"enabled": False})
+                "nginx_auth": user_data.get("nginx_auth", {"enabled": False}),
+                "locked": username in LOCKED_USERS,
+                "active_aliases": active_aliases_per_user.get(username, [])
             })
         
         # Filter active plugins in the last 60 seconds
@@ -973,6 +1090,7 @@ class UserSettingsHandler(BaseHandler):
                 for session_id, session_data in sessions.items():
                     if session_data["user"] == current_username:
                         session_data["user"] = new_username
+                migrate_user_stats(current_username, new_username)
             
             if new_password:
                 USERS[new_username]["password"] = hash_password(new_password)
@@ -992,17 +1110,19 @@ class LogoutHandler(BaseHandler):
         username = "Unknown"
         
         if session_id:
+            if session_id in FORCED_LOGOUT_SESSIONS:
+                FORCED_LOGOUT_SESSIONS.discard(session_id)
             if session_id in sessions:
                 username = sessions[session_id].get("user", "Unknown")
                 if username in USERS:
                     USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
 
                 record_session_end(session_id)
+                clear_user_first_session(session_id)
                 del sessions[session_id]
+                renumber_session_indices(username)
                 log.info(f"User {username} logged out")
         
-        # "Hard" logout: clear session cookie for the standard path
-        # Extra paths are handled by JavaScript in logout.html to ensure clean state
         self.clear_cookie("session_id", path="/")
         self.render("logout.html", about_modal=ABOUT_DRAWER_HTML)
 
@@ -1017,14 +1137,97 @@ class WorkflowListHandler(BaseHandler):
         session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
+        alias = session_data.get("alias")
         
-        workflows = list_user_workflows(username)
-        self.set_header("Content-Type", "application/json")
-        self.write({
-            "success": True,
-            "workflows": workflows,
-            "user_directory": get_user_workflow_dir(username)
-        })
+        try:
+            result = list_user_workflows(username, alias)
+            self.set_header("Content-Type", "application/json")
+            self.write({
+                "success": True,
+                "tree": result["root"],
+                "user_directory": result["user_directory"]
+            })
+        except Exception as e:
+            log.error(f"Error listing workflows: {e}")
+            self.set_status(500)
+            self.write({"success": False, "error": f"Error listing workflows: {str(e)}"})
+
+class WorkflowMkdirHandler(BaseHandler):
+    def post(self):
+        if not is_authenticated(self):
+            self.set_status(401)
+            self.write({"success": False, "error": "Not authenticated"})
+            return
+        session_id = self.current_user
+        session_data = get_session(session_id)
+        username = session_data["user"]
+        alias = session_data.get("alias")
+        try:
+            data = json.loads(self.request.body)
+        except Exception as e:
+            self.set_status(400)
+            self.write({"success": False, "error": f"Invalid JSON: {str(e)}"})
+            return
+        folder_path = data.get("path", "").strip()
+        if not folder_path:
+            self.set_status(400)
+            self.write({"success": False, "error": "Folder path is required"})
+            return
+        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username, alias)), "")
+        abs_path = os.path.abspath(os.path.join(user_dir, folder_path))
+        if not abs_path.startswith(user_dir):
+            self.set_status(400)
+            self.write({"success": False, "error": "Invalid path"})
+            return
+        try:
+            os.makedirs(abs_path, exist_ok=True)
+            log.info(f"User {username} created folder: {folder_path}")
+            self.write({"success": True, "message": "Folder created"})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"success": False, "error": str(e)})
+
+class WorkflowRenameHandler(BaseHandler):
+    def post(self):
+        if not is_authenticated(self):
+            self.set_status(401)
+            self.write({"success": False, "error": "Not authenticated"})
+            return
+        session_id = self.current_user
+        session_data = get_session(session_id)
+        username = session_data["user"]
+        alias = session_data.get("alias")
+        try:
+            data = json.loads(self.request.body)
+        except Exception as e:
+            self.set_status(400)
+            self.write({"success": False, "error": f"Invalid JSON: {str(e)}"})
+            return
+        old_path = data.get("oldPath", "").strip()
+        new_path = data.get("newPath", "").strip()
+        if not old_path or not new_path:
+            self.set_status(400)
+            self.write({"success": False, "error": "oldPath and newPath are required"})
+            return
+        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username, alias)), "")
+        abs_old = os.path.abspath(os.path.join(user_dir, old_path))
+        abs_new = os.path.abspath(os.path.join(user_dir, new_path))
+        if not abs_old.startswith(user_dir) or not abs_new.startswith(user_dir):
+            self.set_status(400)
+            self.write({"success": False, "error": "Invalid path"})
+            return
+        if not os.path.exists(abs_old):
+            self.set_status(404)
+            self.write({"success": False, "error": "Source not found"})
+            return
+        try:
+            os.makedirs(os.path.dirname(abs_new), exist_ok=True)
+            os.rename(abs_old, abs_new)
+            log.info(f"User {username} renamed {old_path} -> {new_path}")
+            self.write({"success": True, "message": "Renamed successfully"})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"success": False, "error": str(e)})
 
 class WorkflowLoadHandler(BaseHandler):
     def get(self, filename):
@@ -1036,8 +1239,9 @@ class WorkflowLoadHandler(BaseHandler):
         session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
+        alias = session_data.get("alias")
         
-        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username)), "")
+        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username, alias)), "")
         filepath = os.path.abspath(os.path.join(user_dir, filename))
 
         if not filepath.startswith(user_dir):
@@ -1067,6 +1271,7 @@ class WorkflowLoadHandler(BaseHandler):
 
 class WorkflowSaveHandler(BaseHandler):
     def post(self):
+        log.info(f"WorkflowSaveHandler.post() called - path: {self.request.path}")
         if not is_authenticated(self):
             self.set_status(401)
             self.write({"success": False, "error": "Not authenticated"})
@@ -1075,8 +1280,15 @@ class WorkflowSaveHandler(BaseHandler):
         session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
+        alias = session_data.get("alias")
         
-        data = json.loads(self.request.body)
+        try:
+            data = json.loads(self.request.body)
+        except Exception as e:
+            log.error(f"JSON parse error in WorkflowSaveHandler: {e}")
+            self.set_status(400)
+            self.write({"success": False, "error": f"Invalid JSON: {str(e)}"})
+            return
         filename = data.get("filename", "").strip()
         workflow_data = data.get("workflow")
         
@@ -1088,7 +1300,7 @@ class WorkflowSaveHandler(BaseHandler):
         if not filename.endswith('.json'):
             filename += '.json'
         
-        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username)), "")
+        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username, alias)), "")
         filepath = os.path.abspath(os.path.join(user_dir, filename))
 
         if not filepath.startswith(user_dir):
@@ -1097,6 +1309,7 @@ class WorkflowSaveHandler(BaseHandler):
             return
         
         try:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(workflow_data, f, indent=2, ensure_ascii=False)
             
@@ -1117,8 +1330,9 @@ class WorkflowDeleteHandler(BaseHandler):
         session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
+        alias = session_data.get("alias")
         
-        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username)), "")
+        user_dir = os.path.join(os.path.abspath(get_user_workflow_dir(username, alias)), "")
         filepath = os.path.abspath(os.path.join(user_dir, filename))
 
         if not filepath.startswith(user_dir):
@@ -1174,10 +1388,11 @@ class SendMessageHandler(BaseHandler):
         session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
+        session_index = session_data.get("session_index", 1)
         
         data = json.loads(self.request.body)
         message = data.get("message", "").strip()
-        to_user = data.get("to_user", "admin")
+        to_id = data.get("to_user", "admin")
         message_type = data.get("message_type", "text")
         file_data = data.get("file_data")
         
@@ -1185,9 +1400,12 @@ class SendMessageHandler(BaseHandler):
             self.write({"success": False, "error": "Message cannot be empty"})
             return
         
+        from_display = f"{username} #{session_index}"
         message_data = {
             "from": username,
-            "to": to_user,
+            "from_id": session_id,
+            "from_display": from_display,
+            "to": to_id,
             "message": message,
             "timestamp": time.time(),
             "read": False,
@@ -1198,16 +1416,20 @@ class SendMessageHandler(BaseHandler):
         if username not in CHAT_MESSAGES: CHAT_MESSAGES[username] = []
         CHAT_MESSAGES[username].append(message_data)
         
-        if to_user != "admin" and to_user != username:
-            if to_user not in CHAT_MESSAGES: CHAT_MESSAGES[to_user] = []
-            CHAT_MESSAGES[to_user].append(message_data)
+        if to_id != "admin" and to_id in sessions:
+            target_user = sessions[to_id]["user"]
+            if target_user != username:
+                if target_user not in CHAT_MESSAGES: CHAT_MESSAGES[target_user] = []
+                CHAT_MESSAGES[target_user].append(message_data)
 
         for ws in ADMIN_CHAT_WEBSOCKETS:
             try:
                 ws.write_message(json.dumps({
                     "type": "new_message",
                     "from_user": username,
-                    "to_user": to_user,
+                    "from_id": session_id,
+                    "from_display": from_display,
+                    "to_user": to_id,
                     "message": message,
                     "timestamp": time.time(),
                     "message_type": message_type,
@@ -1215,12 +1437,14 @@ class SendMessageHandler(BaseHandler):
                 }))
             except: pass
         
-        if to_user in USER_CHAT_WEBSOCKETS:
-            for ws in USER_CHAT_WEBSOCKETS[to_user]:
+        if to_id in USER_CHAT_WEBSOCKETS:
+            for ws in USER_CHAT_WEBSOCKETS[to_id]:
                 try:
                     ws.write_message(json.dumps({
                         "type": "new_message",
                         "from_user": username,
+                        "from_id": session_id,
+                        "from_display": from_display,
                         "message": message,
                         "timestamp": time.time(),
                         "message_type": message_type,
@@ -1240,9 +1464,10 @@ class UploadChatFileHandler(BaseHandler):
         session_id = self.current_user
         session_data = get_session(session_id)
         username = session_data["user"]
+        session_index = session_data.get("session_index", 1)
         
         message = self.get_argument("message", "").strip()
-        to_user = self.get_argument("to_user", "admin")
+        to_id = self.get_argument("to_user", "admin")
         
         file_data_list = []
         
@@ -1268,9 +1493,12 @@ class UploadChatFileHandler(BaseHandler):
             else:
                 message = f"Sent {len(file_data_list)} files"
         
+        from_display = f"{username} #{session_index}"
         message_data = {
             "from": username,
-            "to": to_user,
+            "from_id": session_id,
+            "from_display": from_display,
+            "to": to_id,
             "message": message,
             "timestamp": time.time(),
             "read": False,
@@ -1281,16 +1509,20 @@ class UploadChatFileHandler(BaseHandler):
         if username not in CHAT_MESSAGES: CHAT_MESSAGES[username] = []
         CHAT_MESSAGES[username].append(message_data)
         
-        if to_user != "admin" and to_user != username:
-            if to_user not in CHAT_MESSAGES: CHAT_MESSAGES[to_user] = []
-            CHAT_MESSAGES[to_user].append(message_data)
+        if to_id != "admin" and to_id in sessions:
+            target_user = sessions[to_id]["user"]
+            if target_user != username:
+                if target_user not in CHAT_MESSAGES: CHAT_MESSAGES[target_user] = []
+                CHAT_MESSAGES[target_user].append(message_data)
 
         for ws in ADMIN_CHAT_WEBSOCKETS:
             try:
                 ws.write_message(json.dumps({
                     "type": "new_message",
                     "from_user": username,
-                    "to_user": to_user,
+                    "from_id": session_id,
+                    "from_display": from_display,
+                    "to_user": to_id,
                     "message": message,
                     "timestamp": time.time(),
                     "message_type": "file" if file_data_list else "text",
@@ -1298,12 +1530,14 @@ class UploadChatFileHandler(BaseHandler):
                 }))
             except: pass
         
-        if to_user in USER_CHAT_WEBSOCKETS:
-            for ws in USER_CHAT_WEBSOCKETS[to_user]:
+        if to_id in USER_CHAT_WEBSOCKETS:
+            for ws in USER_CHAT_WEBSOCKETS[to_id]:
                 try:
                     ws.write_message(json.dumps({
                         "type": "new_message",
                         "from_user": username,
+                        "from_id": session_id,
+                        "from_display": from_display,
                         "message": message,
                         "timestamp": time.time(),
                         "message_type": "file" if file_data_list else "text",
@@ -1374,12 +1608,28 @@ class ChatUsersListHandler(BaseHandler):
             self.set_status(401)
             return
 
+        current_session_id = self.current_user
         user_list = []
-        for username in USERS:
-            # Puteam adăuga status (online/offline) bazat pe USER_CHAT_WEBSOCKETS
+
+        # Add Administrator
+        user_list.append({
+            "username": "admin",
+            "display_name": "Administrator",
+            "online": len(ADMIN_CHAT_WEBSOCKETS) > 0,
+            "is_session": False
+        })
+
+        # Add sessions
+        for sid, sdata in sessions.items():
+            if sid == current_session_id:
+                continue
+
             user_list.append({
-                "username": username,
-                "online": username in USER_CHAT_WEBSOCKETS
+                "username": sdata["user"],
+                "session_id": sid,
+                "display_name": f"{sdata['user']} #{sdata.get('session_index', 1)}",
+                "online": sid in USER_CHAT_WEBSOCKETS,
+                "is_session": True
             })
 
         self.write({"success": True, "users": user_list})
@@ -1422,6 +1672,8 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.username = None
+        self.session_id = None
+        self.session_index = 1
     
     def check_origin(self, origin):
         return True
@@ -1431,16 +1683,17 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
             self.close()
             return
         
-        session_id = self.current_user
-        session_data = get_session(session_id)
+        self.session_id = self.current_user
+        session_data = get_session(self.session_id)
         self.username = session_data["user"]
+        self.session_index = session_data.get("session_index", 1)
         
         if self.username not in CHAT_MESSAGES:
             CHAT_MESSAGES[self.username] = []
         
-        if self.username not in USER_CHAT_WEBSOCKETS:
-            USER_CHAT_WEBSOCKETS[self.username] = []
-        USER_CHAT_WEBSOCKETS[self.username].append(self)
+        if self.session_id not in USER_CHAT_WEBSOCKETS:
+            USER_CHAT_WEBSOCKETS[self.session_id] = []
+        USER_CHAT_WEBSOCKETS[self.session_id].append(self)
         
         unread_count = sum(1 for msg in CHAT_MESSAGES[self.username] if msg["from"] != self.username and not msg["read"])
         self.write_message(json.dumps({
@@ -1454,14 +1707,18 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
             
             if data.get("type") == "send_message":
                 message_text = data.get("message", "").strip()
-                to_user = data.get("to_user", "admin")
+                to_id = data.get("to_user", "admin") # Can be 'admin' or session_id
                 message_type = data.get("message_type", "text")
                 file_data = data.get("file_data")
                 
                 if message_text and self.username:
+                    from_display = f"{self.username} #{self.session_index}"
+
                     message_data = {
                         "from": self.username,
-                        "to": to_user,
+                        "from_id": self.session_id,
+                        "from_display": from_display,
+                        "to": to_id,
                         "message": message_text,
                         "timestamp": time.time(),
                         "read": False,
@@ -1469,22 +1726,27 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
                         "file_data": file_data
                     }
 
-                    # Store message for both users
+                    # Store message in history (global per user for now, but with session info)
                     if self.username not in CHAT_MESSAGES: CHAT_MESSAGES[self.username] = []
                     CHAT_MESSAGES[self.username].append(message_data)
                     
-                    if to_user != "admin" and to_user != self.username:
-                        if to_user not in CHAT_MESSAGES: CHAT_MESSAGES[to_user] = []
-                        CHAT_MESSAGES[to_user].append(message_data)
+                    # If recipient is another session of a different user, store there too
+                    if to_id != "admin" and to_id in sessions:
+                        target_user = sessions[to_id]["user"]
+                        if target_user != self.username:
+                            if target_user not in CHAT_MESSAGES: CHAT_MESSAGES[target_user] = []
+                            CHAT_MESSAGES[target_user].append(message_data)
 
                     # Notify Admin if relevant
-                    if to_user == "admin":
+                    if to_id == "admin":
                         for ws in ADMIN_CHAT_WEBSOCKETS:
                             try:
                                 ws.write_message(json.dumps({
                                     "type": "new_message",
                                     "from_user": self.username,
-                                    "to_user": to_user,
+                                    "from_id": self.session_id,
+                                    "from_display": from_display,
+                                    "to_user": to_id,
                                     "message": message_text,
                                     "timestamp": time.time(),
                                     "message_type": message_type,
@@ -1492,13 +1754,15 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
                                 }))
                             except: pass
 
-                    # Notify Recipient User
-                    if to_user in USER_CHAT_WEBSOCKETS:
-                        for ws in USER_CHAT_WEBSOCKETS[to_user]:
+                    # Notify Recipient Session
+                    if to_id in USER_CHAT_WEBSOCKETS:
+                        for ws in USER_CHAT_WEBSOCKETS[to_id]:
                             try:
                                 ws.write_message(json.dumps({
                                     "type": "new_message",
                                     "from_user": self.username,
+                                    "from_id": self.session_id,
+                                    "from_display": from_display,
                                     "message": message_text,
                                     "timestamp": time.time(),
                                     "message_type": message_type,
@@ -1540,11 +1804,11 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
             log.error(f"Error in chat WebSocket: {e}")
     
     def on_close(self):
-        if self.username and self.username in USER_CHAT_WEBSOCKETS:
-            if self in USER_CHAT_WEBSOCKETS[self.username]:
-                USER_CHAT_WEBSOCKETS[self.username].remove(self)
-            if not USER_CHAT_WEBSOCKETS[self.username]:
-                del USER_CHAT_WEBSOCKETS[self.username]
+        if self.session_id and self.session_id in USER_CHAT_WEBSOCKETS:
+            if self in USER_CHAT_WEBSOCKETS[self.session_id]:
+                USER_CHAT_WEBSOCKETS[self.session_id].remove(self)
+            if not USER_CHAT_WEBSOCKETS[self.session_id]:
+                del USER_CHAT_WEBSOCKETS[self.session_id]
 
 # === SESSION CHECK HANDLER ===
 class SessionCheckHandler(BaseHandler):
@@ -1559,6 +1823,9 @@ class SessionCheckHandler(BaseHandler):
             self.write({"status": "forced_logout"})
             return
         
+        # We need to check if it's a forced logout even if it's not in the sessions dict anymore
+        # because current_user might still return the old session_id from cookie
+
         session_data = get_session(session_id)
         if session_data:
             username = session_data["user"]
@@ -1578,15 +1845,22 @@ class SessionCheckHandler(BaseHandler):
                 elif time_remaining <= 0:
                     if username in USERS:
                         USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
+                    clear_user_first_session(session_id)
                     del sessions[session_id]
+                    renumber_session_indices(username)
                     self.clear_cookie("session_id", path="/")
                     self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
                     return
             
+            concurrent_sessions = [sid for sid, sdata in sessions.items() if sdata["user"] == username]
             self.write({
                 "status": "authenticated", 
                 "user": username, 
-                "time_remaining": int(time_remaining) if user_timeout > 0 else None
+                "time_remaining": int(time_remaining) if user_timeout > 0 else None,
+                "session_index": session_data.get("session_index", 1),
+                "alias": session_data.get("alias", ""),
+                "has_concurrent_sessions": len(concurrent_sessions) > 1,
+                "handover_lock_available": is_handover_lock_available(session_data, session_id)
             })
         else:
             self.write({"status": "not_authenticated"})
@@ -1614,6 +1888,115 @@ class SessionRefreshHandler(BaseHandler):
             self.write({"success": True, "message": "Session extended by 60 minutes"})
         else:
             self.write({"success": False, "error": "Session not found"})
+
+class AliasListHandler(BaseHandler):
+    def get(self):
+        self.write({"aliases": ALIASES})
+
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            alias = data.get("alias", "").strip()
+            if not alias:
+                self.write({"success": False, "error": "Alias cannot be empty"})
+                return
+            if alias in ALIASES:
+                self.write({"success": False, "error": "Alias already exists"})
+                return
+            ALIASES.append(alias)
+            save_config()
+            self.write({"success": True, "aliases": ALIASES})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"success": False, "error": str(e)})
+
+    def delete(self):
+        session_id = self.current_user
+        if not session_id:
+            self.set_status(401)
+            self.write({"success": False, "error": "Not authenticated"})
+            return
+        try:
+            data = json.loads(self.request.body)
+            alias = data.get("alias", "").strip()
+            if alias in ALIASES:
+                ALIASES.remove(alias)
+                ALIAS_LOCKS.discard(alias)
+                save_config()
+            self.write({"success": True, "aliases": ALIASES})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"success": False, "error": str(e)})
+
+class SingleUserLockHandler(BaseHandler):
+    def get(self):
+        session_id = self.current_user
+        if not session_id:
+            self.write({"locked": False, "session_index": 0, "handover_lock_available": False})
+            return
+        session_data = get_session(session_id)
+        if not session_data:
+            self.write({"locked": False, "session_index": 0, "handover_lock_available": False})
+            return
+        username = session_data["user"]
+        alias = session_data.get("alias", "")
+        locked = username in LOCKED_USERS
+        self.write({
+            "locked": locked,
+            "session_index": session_data.get("session_index", 1),
+            "alias": alias,
+            "handover_lock_available": is_handover_lock_available(session_data, session_id)
+        })
+
+    def post(self):
+        session_id = self.current_user
+        if not session_id:
+            self.write({"success": False, "error": "Not authenticated"})
+            return
+        session_data = get_session(session_id)
+        if not session_data:
+            self.write({"success": False, "error": "Session not found"})
+            return
+
+        if not is_handover_lock_available(session_data, session_id):
+            self.write({"success": False, "error": "Lock is not available for this session"})
+            return
+
+        alias = session_data.get("alias", "")
+        username = session_data["user"]
+
+        if username in LOCKED_USERS:
+            LOCKED_USERS.discard(username)
+            log.info(f"User {username} unlocked")
+            self.write({"success": True, "locked": False, "alias": alias, "session_index": session_data.get("session_index", 1), "handover_lock_available": True, "message": "User unlocked"})
+        else:
+            LOCKED_USERS.add(username)
+            # Terminate all other sessions of the same user
+            other_sessions = [sid for sid, sdata in sessions.items()
+                              if sdata["user"] == username and sid != session_id]
+            for sid in other_sessions:
+                if sid in USER_CHAT_WEBSOCKETS:
+                    for ws in list(USER_CHAT_WEBSOCKETS[sid]):
+                        try:
+                            ws.write_message(json.dumps({
+                                "type": "system_notification",
+                                "message": f"Session terminated because user {username} locked the account."
+                            }))
+                            ws.close()
+                        except:
+                            pass
+                if sid in sessions:
+                    user_of_sid = sessions[sid]["user"]
+                    FORCED_LOGOUT_SESSIONS.add(sid)
+                    # Don't clear_user_first_session here to avoid removing lock if this was first session
+                    del sessions[sid]
+                    if user_of_sid in USERS:
+                        USERS[user_of_sid]["instances"] = max(0, USERS[user_of_sid]["instances"] - 1)
+                    record_session_end(sid)
+                    renumber_session_indices(user_of_sid)
+
+            log.info(f"User {username} locked (alias: {alias}), terminated {len(other_sessions)} other session(s)")
+            self.write({"success": True, "locked": True, "alias": alias, "session_index": session_data.get("session_index", 1), "handover_lock_available": True, "message": "Account locked exclusively for this session, other sessions terminated"})
 
 # === ADMIN AUTH HANDLERS - CORECTATE ===
 class AdminLoginHandler(BaseHandler):
@@ -1809,6 +2192,7 @@ class AdminSessionsHandler(BaseHandler):
             BLOCKED_USERS[username] = time.time() + 300
             record_session_end(session_id)
             del sessions[session_id]
+            renumber_session_indices(username)
             log.info(f"Admin forced logout for session {session_id}, user {username} blocked for 5 minutes")
         
         self.set_status(204)
@@ -1913,6 +2297,7 @@ class AdminUsersHandler(BaseHandler):
                     if session_data["user"] == username:
                         session_data["user"] = new_username
                         session_data["comfy_url"] = user_data["comfy_url"]
+                migrate_user_stats(username, new_username)
             
             comfy_url = user_data["comfy_url"]
             if comfy_url not in comfy_instances_ready:
@@ -1950,6 +2335,7 @@ class AdminUsersHandler(BaseHandler):
                         FORCED_LOGOUT_SESSIONS.add(session_id)
                 
                 for session_id in sessions_to_delete:
+                    clear_user_first_session(session_id)
                     del sessions[session_id]
             
             del USERS[username]
@@ -2124,9 +2510,11 @@ class AdminTerminateSessionHandler(BaseHandler):
                         ws.close()
 
                 # Log logout in usage stats
+                FORCED_LOGOUT_SESSIONS.add(session_id)
                 record_session_end(session_id)
-
+                clear_user_first_session(session_id)
                 del sessions[session_id]
+                renumber_session_indices(user)
                 save_config()
                 self.write({"success": True, "message": f"Session {session_id} was terminated"})
             else:
@@ -2275,17 +2663,19 @@ class AdminChatSendHandler(BaseHandler):
         }
         CHAT_MESSAGES[to_user].append(message_data)
         
-        if to_user in USER_CHAT_WEBSOCKETS:
-            for ws in USER_CHAT_WEBSOCKETS[to_user]:
-                try:
-                    ws.write_message(json.dumps({
-                        "type": "new_message",
-                        "from": "admin",
-                        "message": message,
-                        "timestamp": time.time()
-                    }))
-                except:
-                    pass
+        # Notify all sessions of this user
+        for sid, sdata in sessions.items():
+            if sdata["user"] == to_user and sid in USER_CHAT_WEBSOCKETS:
+                for ws in USER_CHAT_WEBSOCKETS[sid]:
+                    try:
+                        ws.write_message(json.dumps({
+                            "type": "new_message",
+                            "from": "admin",
+                            "message": message,
+                            "timestamp": time.time()
+                        }))
+                    except:
+                        pass
         
         self.write({"success": True})
 
@@ -2344,19 +2734,21 @@ class AdminChatUploadFileHandler(BaseHandler):
         }
         CHAT_MESSAGES[to_user].append(message_data)
         
-        if to_user in USER_CHAT_WEBSOCKETS:
-            for ws in USER_CHAT_WEBSOCKETS[to_user]:
-                try:
-                    ws.write_message(json.dumps({
-                        "type": "new_message",
-                        "from": "admin",
-                        "message": message,
-                        "timestamp": time.time(),
-                        "message_type": "file" if file_data_list else "text",
-                        "file_data": file_data_list[0] if len(file_data_list) == 1 else None
-                    }))
-                except:
-                    pass
+        # Notify all sessions of this user
+        for sid, sdata in sessions.items():
+            if sdata["user"] == to_user and sid in USER_CHAT_WEBSOCKETS:
+                for ws in USER_CHAT_WEBSOCKETS[sid]:
+                    try:
+                        ws.write_message(json.dumps({
+                            "type": "new_message",
+                            "from": "admin",
+                            "message": message,
+                            "timestamp": time.time(),
+                            "message_type": "file" if file_data_list else "text",
+                            "file_data": file_data_list[0] if len(file_data_list) == 1 else None
+                        }))
+                    except:
+                        pass
         
         self.write({"success": True})
 
@@ -2407,17 +2799,19 @@ class AdminChatWebSocketHandler(tornado.websocket.WebSocketHandler):
                     }
                     CHAT_MESSAGES[to_user].append(message_data)
                     
-                    if to_user in USER_CHAT_WEBSOCKETS:
-                        for ws in USER_CHAT_WEBSOCKETS[to_user]:
-                            try:
-                                ws.write_message(json.dumps({
-                                    "type": "new_message",
-                                    "from": "admin",
-                                    "message": message_text,
-                                    "timestamp": time.time()
-                                }))
-                            except:
-                                pass
+                    # Notify all sessions of this user
+                    for sid, sdata in sessions.items():
+                        if sdata["user"] == to_user and sid in USER_CHAT_WEBSOCKETS:
+                            for ws in USER_CHAT_WEBSOCKETS[sid]:
+                                try:
+                                    ws.write_message(json.dumps({
+                                        "type": "new_message",
+                                        "from": "admin",
+                                        "message": message_text,
+                                        "timestamp": time.time()
+                                    }))
+                                except:
+                                    pass
                     
                     self.write_message(json.dumps({
                         "type": "message_sent",
@@ -2568,6 +2962,31 @@ class MultiInstanceProxyHandler(BaseHandler):
         session_data = get_session(session_id)
         return session_data.get("comfy_url") if session_data else None
     
+    def _modify_prompt_for_alias(self, body, alias):
+        """Modifică prompt-ul pentru a include alias-ul în prefixul fișierelor de ieșire"""
+        try:
+            data = json.loads(body)
+            modified = False
+            if "prompt" in data:
+                for node_id, node_data in data["prompt"].items():
+                    if "inputs" in node_data:
+                        inputs = node_data["inputs"]
+                        # Prepend alias to common output prefix fields
+                        for field in ["filename_prefix", "prefix", "output_path"]:
+                            if field in inputs and isinstance(inputs[field], str):
+                                # Avoid double prepending
+                                if not inputs[field].startswith(f"{alias}/"):
+                                    inputs[field] = f"{alias}/{inputs[field]}"
+                                    modified = True
+
+            if modified:
+                log.info(f"Modified prompt to use alias subfolder: {alias}")
+                return json.dumps(data).encode('utf-8')
+            return body
+        except Exception as e:
+            log.error(f"Error modifying prompt for alias: {e}")
+            return body
+
     def _get_port_from_host(self):
         """Extrage portul din header-ul Host"""
         host = self.request.headers.get("Host", "")
@@ -2675,7 +3094,7 @@ class MultiInstanceProxyHandler(BaseHandler):
                 if (typeof openForcedLogoutModal === 'function') {
                     openForcedLogoutModal();
                 } else {
-                    window.location.href = '/login';
+                    window.location.href = '/logout';
                 }
                 </script>
                 </body>
@@ -2696,7 +3115,9 @@ class MultiInstanceProxyHandler(BaseHandler):
                         if username in USERS:
                             USERS[username]["instances"] = max(0, USERS[username]["instances"] - 1)
                         record_session_end(session_id_val)
+                        clear_user_first_session(session_id_val)
                         del sessions[session_id_val]
+                        renumber_session_indices(username)
                         self.clear_cookie("session_id", path="/")
                         self.render("session_expired.html", about_modal=ABOUT_DRAWER_HTML)
                         return
@@ -2831,6 +3252,12 @@ class MultiInstanceProxyHandler(BaseHandler):
             body = None
             if method in ["POST", "PUT", "DELETE", "PATCH"] and self.request.body:
                 body = self.request.body
+
+                # Interceptare prompt pentru a injecta alias-ul în folderele de output
+                if method == "POST" and "prompt" in raw_path and session_data:
+                    alias = session_data.get("alias")
+                    if alias:
+                        body = self._modify_prompt_for_alias(body, alias)
             
             # Creează cererea
             req = tornado.httpclient.HTTPRequest(
@@ -2895,7 +3322,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             
             if (is_html or is_json) and response.body:
                 # Intercept prompt_id for usage monitoring
-                if is_json and "/prompt" in raw_path and method == "POST" and response.code == 200:
+                if is_json and "prompt" in raw_path and method == "POST" and response.code == 200:
                     try:
                         prompt_resp = json.loads(response.body)
                         prompt_id = prompt_resp.get("prompt_id")
@@ -2921,7 +3348,9 @@ class MultiInstanceProxyHandler(BaseHandler):
                     
                     # Inject our UI only into HTML (only on success)
                     if is_html and response.code == 200:
-                        content = self._inject_ui(content, proxy_username)
+                        session_index = session_data.get("session_index", 1) if session_data else 1
+                        alias = session_data.get("alias", "") if session_data else ""
+                        content = self._inject_ui(content, proxy_username, session_index, alias)
                     
                     self.write(content.encode(encoding))
                 except Exception as e:
@@ -2944,7 +3373,7 @@ class MultiInstanceProxyHandler(BaseHandler):
             self.set_status(502)
             self.write(f"Bad Gateway: {str(e)}")
     
-    def _inject_ui(self, html_content, username):
+    def _inject_ui(self, html_content, username, session_index=1, alias=""):
         """Injects UI into HTML responses"""
         try:
             # Elimină CSP-ul care ar putea bloca resursele noastre
@@ -2966,6 +3395,11 @@ class MultiInstanceProxyHandler(BaseHandler):
             
             if match:
                 head_end_pos = match.start()
+                escaped_about = ABOUT_DRAWER_HTML.replace('`', '\\`').replace('\n', ' ')
+                escaped_chat = CHAT_UI_HTML.replace('`', '\\`').replace('\n', ' ')
+                escaped_settings = USER_SETTINGS_MODAL_HTML.replace('`', '\\`').replace('\n', ' ')
+                escaped_session = SESSION_MODALS_HTML.replace('`', '\\`').replace('\n', ' ')
+                escaped_workflow = WORKFLOW_BROWSER_HTML.replace('`', '\\`').replace('\n', ' ')
                 our_injection = f"""
                 <link rel="stylesheet" type="text/css" href="/static/css/styles.css">
                 <script src="/static/js/main.js"></script>
@@ -3064,8 +3498,142 @@ class MultiInstanceProxyHandler(BaseHandler):
                 .comfy-settings-btn:hover {{ background: #218838; }}
                 .comfy-logout-btn:hover {{ background: #c82333; }}
 
-                /* Hide native ComfyUI workflow buttons if they appear */
-                button[title*="Workflow"], .comfy-workflow-btn {{ display: none !important; }}
+                .comfy-lock-btn {{
+                    background: none;
+                    color: #aaa;
+                    border: none;
+                    cursor: pointer;
+                    font-size: 13px;
+                    padding: 0 4px;
+                    margin-left: 3px;
+                    line-height: 1;
+                    transition: all 0.2s;
+                }}
+                .comfy-lock-btn:hover {{ color: #ffc107; }}
+                .comfy-lock-btn.locked {{ color: #ffc107; }}
+                .comfy-lock-btn.locked:hover {{ color: #dc3545; }}
+
+                .workflow-dot {{
+                    position: fixed;
+                    bottom: 15px;
+                    left: 15px;
+                    width: 20px;
+                    height: 20px;
+                    background: #28a745;
+                    border: 2px solid #1e7e34;
+                    border-radius: 50%;
+                    cursor: pointer;
+                    z-index: 20002;
+                    box-shadow: 0 0 8px rgba(40,167,69,0.5);
+                    transition: all 0.2s;
+                }}
+                .workflow-dot:hover {{
+                    transform: scale(1.2);
+                    box-shadow: 0 0 12px rgba(40,167,69,0.8);
+                }}
+                .workflow-browser-modal {{
+                    display: none;
+                    position: fixed;
+                    top: 0; left: 0; width: 100%; height: 100%;
+                    background: rgba(0,0,0,0.7);
+                    z-index: 20003;
+                    justify-content: center;
+                    align-items: center;
+                }}
+                .workflow-browser-content {{
+                    background: #222;
+                    border-radius: 8px;
+                    width: 500px;
+                    max-width: 90%;
+                    max-height: 80vh;
+                    display: flex;
+                    flex-direction: column;
+                    box-shadow: 0 5px 25px rgba(0,0,0,0.5);
+                }}
+                .workflow-browser-header {{
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 15px 20px;
+                    border-bottom: 1px solid #444;
+                }}
+                .workflow-browser-header h2 {{ margin: 0; font-size: 16px; color: #e0e0e0; }}
+                .workflow-close-btn {{
+                    background: none; border: none; color: #999;
+                    font-size: 24px; cursor: pointer; padding: 0 5px;
+                }}
+                .workflow-close-btn:hover {{ color: #fff; }}
+                .workflow-browser-body {{
+                    padding: 20px;
+                    overflow-y: auto;
+                    flex: 1;
+                }}
+                .workflow-browser-section {{
+                    margin-bottom: 20px;
+                }}
+                .workflow-browser-section h3 {{
+                    margin: 0 0 10px 0; font-size: 14px; color: #aaa;
+                }}
+                .workflow-list {{
+                    display: flex;
+                    flex-direction: column;
+                    gap: 6px;
+                    max-height: 250px;
+                    overflow-y: auto;
+                }}
+                .workflow-item {{
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    background: #2a2a2a;
+                    padding: 8px 12px;
+                    border-radius: 4px;
+                    border-left: 3px solid #28a745;
+                }}
+                .workflow-item-name {{
+                    font-size: 13px; color: #e0e0e0;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+                }}
+                .workflow-item-date {{
+                    font-size: 11px; color: #777; margin: 0 10px; white-space: nowrap;
+                }}
+                .workflow-item-actions {{
+                    display: flex; gap: 5px;
+                }}
+                .workflow-item-btn {{
+                    padding: 3px 8px; border: none; border-radius: 3px;
+                    cursor: pointer; font-size: 11px;
+                }}
+                .workflow-load-btn {{ background: #007bff; color: white; }}
+                .workflow-load-btn:hover {{ background: #0056b3; }}
+                .workflow-inject-btn {{ background: #28a745; color: white; }}
+                .workflow-inject-btn:hover {{ background: #1e7e34; }}
+                .workflow-del-btn {{ background: #dc3545; color: white; }}
+                .workflow-del-btn:hover {{ background: #c82333; }}
+                .workflow-empty {{
+                    text-align: center; color: #666; font-size: 13px; padding: 20px;
+                }}
+                .workflow-save-row {{
+                    display: flex; gap: 10px;
+                }}
+                .workflow-save-input {{
+                    flex: 1; padding: 8px 12px; border: 1px solid #444;
+                    background: #333; color: #e0e0e0; border-radius: 4px; font-size: 13px;
+                }}
+                .workflow-save-btn {{
+                    padding: 8px 16px; background: #28a745; color: white;
+                    border: none; border-radius: 4px; cursor: pointer; font-size: 13px;
+                }}
+                .workflow-save-btn:hover {{ background: #1e7e34; }}
+                .workflow-message {{
+                    margin-top: 8px; font-size: 12px; padding: 4px 8px;
+                    border-radius: 3px; display: none;
+                }}
+                .workflow-message.success {{ display: block; color: #28a745; background: rgba(40,167,69,0.1); }}
+                .workflow-message.error {{ display: block; color: #dc3545; background: rgba(220,53,69,0.1); }}
+
+                /* Hide native load/save buttons that conflict with our workflow manager */
+                .comfy-workflow-btn, button[onclick*="queuePrompt"] {{ display: none !important; }}
                 </style>
                 
                 <script id="comfy-auth-init">
@@ -3078,7 +3646,9 @@ class MultiInstanceProxyHandler(BaseHandler):
                     
                     const userInfo = document.createElement('div');
                     userInfo.className = 'comfy-user-info';
-                    userInfo.textContent = 'Welcome, {username}';
+                    var aliasDisplay = '{alias}';
+                    var displaySuffix = aliasDisplay ? ' <span style="color: red; font-weight: bold; margin-left: 5px;">' + aliasDisplay + '</span>' : ' <span style="color: red; font-weight: bold; margin-left: 5px;">#{session_index}</span>';
+                    userInfo.innerHTML = `Welcome, {username}` + displaySuffix + ` <button class="comfy-lock-btn" id="comfyLockBtn" onclick="toggleUserLock()" title="Lock this user - prevent other logins">&#128275;</button>`;
                     
                     const serverTitle = document.createElement('div');
                     serverTitle.className = 'server-title';
@@ -3092,15 +3662,22 @@ class MultiInstanceProxyHandler(BaseHandler):
                         <a href="/logout" class="comfy-logout-btn">Logout</a>
                     `;
                     
-                    document.body.insertAdjacentHTML('beforeend', `{ABOUT_DRAWER_HTML.replace('`', '\\`').replace('\n', ' ')}`);
-                    document.body.insertAdjacentHTML('beforeend', `{CHAT_UI_HTML.replace('`', '\\`').replace('\n', ' ')}`);
-                    document.body.insertAdjacentHTML('beforeend', `{USER_SETTINGS_MODAL_HTML.replace('`', '\\`').replace('\n', ' ')}`);
-                    document.body.insertAdjacentHTML('beforeend', `{SESSION_MODALS_HTML.replace('`', '\\`').replace('\n', ' ')}`);
+                    document.body.insertAdjacentHTML('beforeend', `{escaped_about}`);
+                    document.body.insertAdjacentHTML('beforeend', `{escaped_chat}`);
+                    document.body.insertAdjacentHTML('beforeend', `{escaped_settings}`);
+                    document.body.insertAdjacentHTML('beforeend', `{escaped_session}`);
+                    document.body.insertAdjacentHTML('beforeend', `{escaped_workflow}`);
 
                     document.body.appendChild(overlay);
                     document.body.appendChild(userInfo);
                     document.body.appendChild(serverTitle);
                     document.body.appendChild(buttonsDiv);
+
+                    const workflowDot = document.createElement('div');
+                    workflowDot.className = 'workflow-dot';
+                    workflowDot.title = 'Workflow Manager';
+                    workflowDot.onclick = function() {{ window.openWorkflowBrowser(); }};
+                    document.body.appendChild(workflowDot);
                     
                     console.log('ComfyUI Auth Server UI injected successfully');
                     
@@ -3121,8 +3698,11 @@ class MultiInstanceProxyHandler(BaseHandler):
                 </script>
                 """
                 
+                # Pass session_index to our_injection template
+                our_injection = our_injection.replace("{session_index}", str(session_index))
                 html_content = html_content[:head_end_pos] + our_injection + html_content[head_end_pos:]
             else:
+                our_injection = our_injection.replace("{session_index}", str(session_index))
                 # Dacă nu găsim </head>, injectăm la începutul body sau la începutul documentului
                 body_match = re.search(r'<body>', html_content, re.IGNORECASE)
                 if body_match:
@@ -3198,7 +3778,7 @@ class MultiInstanceWebSocketProxy(WebSocketBaseHandler):
         if not session_data:
             self.close(code=4002, reason="Session not found")
             return
-        
+
         self.username = session_data["user"]
         
         comfy_ws_url = self.get_user_comfy_ws_url()
@@ -3491,12 +4071,16 @@ def make_auth_app():
         (r"/admin/api/terminate-session", AdminTerminateSessionHandler),
         (r"/check-session", SessionCheckHandler),
         (r"/refresh-session", SessionRefreshHandler),
+        (r"/single-user-lock", SingleUserLockHandler),
+        (r"/aliases", AliasListHandler),
         
         # Workflow routes
         (r"/api/workflows/list", WorkflowListHandler),
         (r"/api/workflows/load/(.*)", WorkflowLoadHandler),
         (r"/api/workflows/save", WorkflowSaveHandler),
         (r"/api/workflows/delete/(.*)", WorkflowDeleteHandler),
+        (r"/api/workflows/mkdir", WorkflowMkdirHandler),
+        (r"/api/workflows/rename", WorkflowRenameHandler),
         
         # WebSocket proxy - rute explicite
         (r"/comfy/ws", MultiInstanceWebSocketProxy),
