@@ -384,8 +384,8 @@ function loadChatMessages() {
 function addMessageToChat(message, from, timestamp, message_type = 'text', file_data = null, shouldScroll = true) {
     const chatMessages = document.getElementById('chatMessages');
     const usernameElement = document.querySelector('.comfy-user-info');
-    const myUsername = usernameElement ? usernameElement.textContent.replace(/Welcome, | #\d+/g, '') : '';
-    const cleanFrom = from.replace(/ #\d+/g, '');
+    const myUsername = usernameElement ? usernameElement.textContent.replace(/Welcome, | #\d+/g, '').trim() : '';
+    const cleanFrom = from.replace(/ #\d+/g, '').replace(/\s*\([^)]*\)/g, '').trim();
 
     const messageDiv = document.createElement('div');
     messageDiv.className = `chat-message ${cleanFrom === myUsername ? 'user' : 'admin'}`;
@@ -422,7 +422,7 @@ function addMessageToChat(message, from, timestamp, message_type = 'text', file_
     
     const timeDiv = document.createElement('div');
     timeDiv.className = 'chat-message-time';
-    timeDiv.textContent = `${cleanFrom === myUsername ? 'You ('+from+')' : from} • ${time}`;
+    timeDiv.textContent = `${cleanFrom === myUsername ? 'You' : from} • ${time}`;
     messageDiv.appendChild(timeDiv);
     
     // Add copy to clipboard functionality
