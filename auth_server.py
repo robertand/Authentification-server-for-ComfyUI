@@ -483,7 +483,7 @@ def cleanup_old_chat_files():
 # === WORKFLOW FUNCTIONS ===
 def get_user_workflow_dir(username, alias=None):
     if alias:
-        user_dir = os.path.join(WORKFLOW_ROOT_DIR, username, alias)
+        user_dir = os.path.join(WORKFLOW_ROOT_DIR, alias)
     else:
         user_dir = os.path.join(WORKFLOW_ROOT_DIR, username)
 
@@ -1389,6 +1389,7 @@ class SendMessageHandler(BaseHandler):
         session_data = get_session(session_id)
         username = session_data["user"]
         session_index = session_data.get("session_index", 1)
+        alias_sender = session_data.get("alias", "")
         
         data = json.loads(self.request.body)
         message = data.get("message", "").strip()
@@ -1400,7 +1401,8 @@ class SendMessageHandler(BaseHandler):
             self.write({"success": False, "error": "Message cannot be empty"})
             return
         
-        from_display = f"{username} #{session_index}"
+        base_display = f"{username} #{session_index}"
+        from_display = f"{base_display} ({alias_sender})" if alias_sender else base_display
         message_data = {
             "from": username,
             "from_id": session_id,
@@ -1624,10 +1626,15 @@ class ChatUsersListHandler(BaseHandler):
             if sid == current_session_id:
                 continue
 
+            alias_str = sdata.get("alias", "")
+            display = f"{sdata['user']} #{sdata.get('session_index', 1)}"
+            if alias_str:
+                display += f" ({alias_str})"
             user_list.append({
                 "username": sdata["user"],
+                "alias": alias_str,
                 "session_id": sid,
-                "display_name": f"{sdata['user']} #{sdata.get('session_index', 1)}",
+                "display_name": display,
                 "online": sid in USER_CHAT_WEBSOCKETS,
                 "is_session": True
             })
@@ -1712,7 +1719,10 @@ class ChatWebSocketHandler(WebSocketBaseHandler):
                 file_data = data.get("file_data")
                 
                 if message_text and self.username:
-                    from_display = f"{self.username} #{self.session_index}"
+                    session_data = get_session(self.session_id)
+                    self_alias = session_data.get("alias", "") if session_data else ""
+                    base_display = f"{self.username} #{self.session_index}"
+                    from_display = f"{base_display} ({self_alias})" if self_alias else base_display
 
                     message_data = {
                         "from": self.username,
