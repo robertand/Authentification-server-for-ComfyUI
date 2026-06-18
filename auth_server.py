@@ -227,7 +227,7 @@ DEFAULT_CONFIG = {
         "password": "admin123",
         "enabled": True
     },
-    "workflow_root": "/mnt/prouser/spatiu/ComfyUI/workflows",
+    "workflow_root": os.path.join(os.path.dirname(os.path.abspath(__file__)), "workflows"),
     "global_nginx_auth": {
         "enabled": False,
         "username": "",
@@ -565,6 +565,21 @@ def load_config():
     
     config = upgrade_passwords(config)
     
+    # Migrare automată: dacă workflow_root e o cale veche, o actualizăm la calea relativă curentă
+    expected_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workflows")
+    old_root = config.get("workflow_root", "")
+    if old_root and os.path.isabs(old_root) and os.path.normpath(old_root) != os.path.normpath(expected_root):
+        log.info(f"↻ Migrating workflow_root from old path: {old_root}")
+        log.info(f"   → New path: {expected_root}")
+        config["workflow_root"] = expected_root
+        # Salvează config-ul migrat
+        try:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+            log.info("✓ Config migrated and saved")
+        except Exception as e:
+            log.error(f"Failed to save migrated config: {e}")
+
     if "workflow_root" in config:
         WORKFLOW_ROOT_DIR = config["workflow_root"]
         log.info(f"✓ Workflow root directory loaded: {WORKFLOW_ROOT_DIR}")
@@ -3241,15 +3256,19 @@ class MultiInstanceProxyHandler(BaseHandler):
             headers['X-Forwarded-Port'] = str(port)
             headers['X-Real-IP'] = client_ip
             
-            # Adăugă headere de identificare pentru uz intern
-            if session_id:
+            # Adăugă headere de identificare pentru uz intern (excludem manager routes)
+            if session_id and not path.startswith("api/manager/"):
                 headers['X-User-ID'] = proxy_username
                 headers['X-Session-ID'] = session_id
 
-            # Curăță Cookie header de cookie-urile noastre interne
+            # Manager/snapshot routes need explicit Content-Type (CSRF protection expects application/json)
+            if path.startswith("api/manager/") or path.startswith("api/snapshot/"):
+                headers['Content-Type'] = 'application/json'
+
+            # Curăță Cookie header de cookie-urile noastre interne (păstrăm _xsrf pentru CSRF)
             if 'Cookie' in headers:
                 cookies = headers['Cookie'].split('; ')
-                filtered_cookies = [c for c in cookies if not c.startswith(('session_id=', 'admin_session_id=', '_xsrf='))]
+                filtered_cookies = [c for c in cookies if not c.startswith(('session_id=', 'admin_session_id='))]
                 if filtered_cookies:
                     headers['Cookie'] = '; '.join(filtered_cookies)
                 else:
@@ -3869,8 +3888,8 @@ class MultiInstanceWebSocketProxy(WebSocketBaseHandler):
 
             self.comfy_ws = await tornado.websocket.websocket_connect(
                 request,
-                ping_interval=20,
-                ping_timeout=30,
+                ping_interval=5,
+                ping_timeout=8,
                 max_message_size=500 * 1024 * 1024  # 500MB pentru fișiere mari
             )
             
@@ -3882,16 +3901,36 @@ class MultiInstanceWebSocketProxy(WebSocketBaseHandler):
             
         except Exception as e:
             log.error(f"WebSocket connection error for user {self.username}: {e}")
-            self.close(code=500, reason=f"Connection failed: {str(e)}")
+            await self.send_status("disconnected", f"Connection failed: {str(e)}")
+            await asyncio.sleep(0.1)
+            self.close(code=4000, reason=f"Connection failed: {str(e)}")
     
+    async def send_status(self, status, message=""):
+        """Trimite un mesaj de status explicit către client"""
+        try:
+            if self.ws_connection and not self.ws_connection.is_closing():
+                status_msg = json.dumps({
+                    "type": "status",
+                    "data": {
+                        "status": status,
+                        "message": message,
+                        "sid": -1 if status == "disconnected" else None
+                    }
+                })
+                await self.write_message(status_msg)
+        except:
+            pass
+
     async def _pipe_comfy_to_client(self):
         """Trimite mesajele de la ComfyUI către client"""
+        disconnect_reason = None
         try:
             while self._running and self.comfy_ws:
                 try:
                     msg = await self.comfy_ws.read_message()
                     if msg is None:
                         log.info(f"WebSocket closed by server for user {self.username}")
+                        disconnect_reason = "backend_disconnected"
                         break
                     
                     if self.ws_connection and not self.ws_connection.is_closing():
@@ -3913,14 +3952,26 @@ class MultiInstanceWebSocketProxy(WebSocketBaseHandler):
                         await self.write_message(msg, isinstance(msg, bytes))
                 except tornado.websocket.WebSocketClosedError:
                     log.info(f"WebSocket connection closed for user {self.username}")
+                    disconnect_reason = "backend_closed"
                     break
                 except Exception as e:
                     log.error(f"WebSocket read error for user {self.username}: {e}")
+                    disconnect_reason = "backend_error"
                     break
         except Exception as e:
             log.error(f"WebSocket pipe error for user {self.username}: {e}")
+            disconnect_reason = "pipe_error"
         finally:
-            self.close()
+            self._running = False
+            if disconnect_reason:
+                await self.send_status("disconnected", f"Backend connection lost: {disconnect_reason}")
+                await asyncio.sleep(0.1)
+            if self.comfy_ws:
+                try: self.comfy_ws.close()
+                except: pass
+            if disconnect_reason and self.ws_connection and not self.ws_connection.is_closing():
+                try: self.close(code=4000, reason=disconnect_reason)
+                except: self.close()
     
     async def on_message(self, message):
         """Primește mesaje de la client și le trimite către ComfyUI"""
